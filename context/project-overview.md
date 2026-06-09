@@ -1,132 +1,63 @@
 # Employee Management Dashboard
 
-🚀 Internal Employee & Asset Management System
+🚀 Internal Employee & Asset Management Platform
 
 ---
 
 # Employee Management Dashboard
 
-A centralized platform for managing employees, company assets, reporting structure, and asset requests.
+A centralized platform for managing employees, departments, company assets, reporting hierarchy, and employee asset requests.
 
-The system helps HR/Admin teams maintain employee records, track company assets, and handle asset allocation throughout the employee lifecycle.
+The system is designed to replace spreadsheets, emails, and manual tracking processes with a structured workflow for employee and asset management.
 
 ---
 
-# 📌 Problem Statement
+# 📌 Problem (Core Idea)
 
-Many organizations manage employee information and asset allocation using spreadsheets, emails, and manual tracking systems.
+Many organizations manage employee records and company assets using disconnected systems such as spreadsheets, emails, shared documents, and manual processes.
 
-This leads to:
+This creates:
 
 - Inconsistent employee records
-- Asset tracking issues
-- Missing ownership history
-- Delayed asset requests
-- Difficulty managing reporting structures
-- Poor visibility into employee status changes
+- Poor visibility into asset ownership
+- Missing asset history
+- Delayed request handling
+- Difficult reporting structure management
+- Lack of accountability and auditability
 
-The Employee Management Dashboard provides a centralized system to manage employees, company assets, allocations, and requests.
-
----
-
-# 🎯 Project Goals
-
-- Manage employee records
-- Manage company assets
-- Track asset allocations
-- Maintain reporting hierarchy
-- Handle employee asset requests
-- Maintain complete audit history
-- Provide role-based access
+➡️ The Employee Management Dashboard provides one centralized system for managing employees, assets, allocations, and requests.
 
 ---
 
-# 👥 User Roles
+# 👥 Users
 
-## Admin
-
-Administrators have full access to the system.
-
-Permissions:
-
-- Add employee
-- Update employee details
-- Change employee status
-- Manage departments
-- Manage assets
-- Allocate assets
-- Remove assets
-- Update asset information
-- View employee asset history
-- View asset requests
-- Approve or reject requests
+| Persona  | Responsibilities                                           |
+| -------- | ---------------------------------------------------------- |
+| Admin    | Employee management, asset management, request approvals   |
+| Employee | View profile, manage asset requests, view allocated assets |
 
 ---
 
-## Employee
+# ✨ Core Features
 
-Employees have limited access.
+## A) Employee Management
 
-Permissions:
+Manage employee lifecycle within the organization.
 
-- View profile information
-- View allocated assets
-- Submit asset requests
-- Request asset maintenance
-- Request asset removal
-- View request status
+Capabilities:
 
----
-
-# 🏢 Employee Management
-
-## Employee Information
-
-Each employee contains:
-
-| Field                | Type           |
-| -------------------- | -------------- |
-| employee_id          | Auto Generated |
-| first_name           | String         |
-| last_name            | String         |
-| official_email       | String         |
-| personal_email       | String         |
-| present_address      | Text           |
-| permanent_address    | Text           |
-| joining_date         | Date           |
-| status               | Enum           |
-| department_id        | FK             |
-| reporting_manager_id | FK(Employee)   |
-| created_at           | Timestamp      |
-| updated_at           | Timestamp      |
+- Create employees
+- Update employee information
+- Assign departments
+- Assign reporting managers
+- Manage employee status
+- View employee directory
 
 ---
 
-## Employee Status
+## B) Department Management
 
-```ts
-enum EmployeeStatus {
-  WORKING
-  ON_NOTICE
-  RESIGNED
-  TERMINATED
-}
-```
-
-### Business Rules
-
-- New employee is automatically created with:
-  - WORKING status
-
-- Status can only be changed by Admin
-- Terminated employees cannot receive new assets
-- Resigned employees remain in system for historical records
-
----
-
-# 🏬 Department Management
-
-Departments are maintained separately.
+Maintain organizational departments.
 
 Examples:
 
@@ -137,340 +68,121 @@ Examples:
 - Operations
 - Product
 
----
+Capabilities:
 
-## Department Entity
-
-| Field           | Type      |
-| --------------- | --------- |
-| department_id   | UUID      |
-| department_name | String    |
-| created_at      | Timestamp |
+- Create departments
+- Update departments
+- Assign employees
 
 ---
 
-# 👨‍💼 Reporting Structure
+## C) Reporting Hierarchy
 
-Employees can report to another employee.
+Maintain reporting structure between employees.
 
-Example:
+Capabilities:
 
-CEO
-├── Engineering Manager
-│ ├── Developer A
-│ └── Developer B
-└── HR Manager
-
-### Rules
-
-- Reporting Manager references employee_id
-- Reporting Manager is optional
-- Employee cannot report to themselves
+- Assign reporting managers
+- View reporting hierarchy
+- Track direct reports
 
 ---
 
-# 💻 Asset Management
+## D) Asset Management
 
-The company maintains an inventory of assets.
+Manage company-owned assets and equipment.
 
-Assets may be:
+Supported Asset Categories:
 
-- Allocated
-- Available
-- Under Maintenance
-- Trashed
+- Laptop
+- Mouse
+- Keyboard
+- Headset
+- Earphone
+- Mobile Phone
+- Screen
+- Cooling Pad
+- iPad
 
----
+Capabilities:
 
-## Asset Categories
-
-```ts
-enum AssetCategory {
-  LAPTOP
-  MOUSE
-  KEYBOARD
-  HEADSET
-  EARPHONE
-  MOBILE_PHONE
-  SCREEN
-  COOLING_PAD
-  IPAD
-}
-```
+- Register assets
+- Update assets
+- Allocate assets
+- Remove allocations
+- Track maintenance
+- Mark assets as retired
 
 ---
 
-## Asset Status
+## E) Asset Allocation Tracking
 
-```ts
-enum AssetStatus {
-  AVAILABLE
-  ALLOCATED
-  MAINTENANCE
-  TRASHED
-}
-```
+Track ownership and assignment history of company assets.
 
----
+Capabilities:
 
-## Asset Entity
-
-| Field               | Type                  |
-| ------------------- | --------------------- |
-| asset_id            | UUID                  |
-| asset_category      | Enum                  |
-| asset_serial_number | String                |
-| status              | Enum                  |
-| allocated_to        | FK(Employee) Nullable |
-| created_at          | Timestamp             |
-| updated_at          | Timestamp             |
+- Current allocation tracking
+- Historical allocation records
+- Asset ownership timeline
 
 ---
 
-# 🔄 Asset Allocation
+## F) Asset Request System
 
-Admins can:
+Allow employees to request assets and maintenance.
 
-- Allocate asset to employee
-- Remove asset from employee
-- Update asset details
-- Move asset to maintenance
-- Mark asset as trashed
+Capabilities:
 
----
-
-## Allocation Rules
-
-### Allocate Asset
-
-Requirements:
-
-- Employee must be WORKING
-- Asset must be AVAILABLE
-
-Result:
-
-- Asset status becomes ALLOCATED
-- Employee receives asset
+- New asset requests
+- Asset removal requests
+- Maintenance requests
+- Approval workflow
+- Request tracking
 
 ---
 
-### Remove Asset
+## G) Authentication & Access Control
 
-Result:
+Secure platform access based on employee roles.
 
-- Asset becomes AVAILABLE
-- Allocation removed
+Roles:
 
----
+- Admin
+- Employee
 
-### Maintenance
+Capabilities:
 
-Result:
-
-- Asset status becomes MAINTENANCE
-- Asset cannot be allocated
-
----
-
-### Trash Asset
-
-Result:
-
-- Asset status becomes TRASHED
-- Asset cannot be reused
-
----
-
-# 📋 Asset Request System
-
-Employees can create requests related to assets.
-
----
-
-## Request Types
-
-```ts
-enum RequestType {
-  NEW_ASSET
-  REMOVE_ASSET
-  MAINTENANCE
-}
-```
-
----
-
-## Request Status
-
-```ts
-enum RequestStatus {
-  PENDING
-  APPROVED
-  REJECTED
-  COMPLETED
-}
-```
-
----
-
-## Asset Request Entity
-
-| Field          | Type          |
-| -------------- | ------------- |
-| request_id     | UUID          |
-| employee_id    | FK            |
-| asset_id       | FK Nullable   |
-| request_type   | Enum          |
-| description    | Text          |
-| status         | Enum          |
-| admin_response | Text Nullable |
-| created_at     | Timestamp     |
-| updated_at     | Timestamp     |
-
----
-
-# 🔄 Request Workflow
-
-Employee Creates Request
-
-↓
-
-Admin Reviews Request
-
-↓
-
-Approve / Reject
-
-↓
-
-Action Performed
-
-↓
-
-Request Completed
-
----
-
-# 🗄️ Database Relationships
-
-## Employee
-
-Relations:
-
-- belongs to Department
-- reports to Employee
-- has many Assets
-- has many Asset Requests
-
----
-
-## Department
-
-Relations:
-
-- has many Employees
-
----
-
-## Asset
-
-Relations:
-
-- belongs to Employee (optional)
-
----
-
-## Asset Request
-
-Relations:
-
-- belongs to Employee
-- optionally references Asset
-
----
-
-# 🔐 Authentication & Authorization
-
-## Authentication
-
-- Email + Password Login
-- JWT Access Token
-- Refresh Token
-
----
-
-## Authorization
-
-### Roles
-
-```ts
-enum UserRole {
-  ADMIN
-  EMPLOYEE
-}
-```
-
-Role Guard Protection:
-
-- Admin Routes → ADMIN only
-- Employee Routes → Authenticated users
+- Login
+- JWT authentication
+- Role-based authorization
 
 ---
 
 # 🧱 Tech Stack
 
-| Layer             | Technology      |
-| ----------------- | --------------- |
-| Frontend          | React           |
-| Backend           | NestJS          |
-| ORM               | Prisma          |
-| Database          | PostgreSQL      |
-| Language          | TypeScript      |
-| Authentication    | JWT             |
-| Validation        | class-validator |
-| State Management  | Redux Toolkit   |
-| API Communication | fetch           |
-| Styling           | CSS Modules     |
+| Layer            | Technology    |
+| ---------------- | ------------- |
+| Frontend         | React         |
+| Backend          | NestJS        |
+| Database         | PostgreSQL    |
+| ORM              | Prisma        |
+| Language         | TypeScript    |
+| Authentication   | JWT           |
+| State Management | Redux Toolkit |
+| Styling          | CSS Modules   |
 
 ---
 
-# 📂 Suggested Backend Modules
+# 🔌 High-Level Architecture
 
 ```text
-src/
-
-├── auth
-├── employee
-├── department
-├── asset
-├── asset-request
-├── admin
-├── prisma
-├── common
-└── config
-```
-
----
-
-# 📂 Suggested Frontend Pages
-
-```text
-Admin
-
-/dashboard
-/employees
-/employees/create
-/employees/:id
-/assets
-/asset-requests
-
-Employee
-
-/dashboard
-/profile
-/my-assets
-/my-requests
-/request-asset
+Frontend (React)
+        ↓
+Backend API (NestJS)
+        ↓
+Prisma ORM
+        ↓
+PostgreSQL
 ```
 
 ---
@@ -479,43 +191,53 @@ Employee
 
 ### Employee Management
 
-- Create Employee
-- Update Employee
-- Change Status
-- Department Assignment
-- Reporting Manager Assignment
+- Employee CRUD
+- Department assignment
+- Reporting manager assignment
+- Status management
 
 ### Asset Management
 
-- Add Asset
-- Update Asset
-- Allocate Asset
-- Remove Asset
+- Asset CRUD
+- Asset allocation
+- Asset maintenance tracking
 
 ### Asset Requests
 
-- Create Request
-- View Requests
-- Approve Request
-- Reject Request
+- Request creation
+- Request approval workflow
 
 ### Authentication
 
 - Login
-- Role Based Access
+- JWT Authentication
+- Role-based authorization
 
 ---
 
-# 📌 Current Status
+# 🔮 Future Enhancements
+
+- Leave Management
+- Employee Documents
+- Attendance Tracking
+- Notifications
+- Email Integration
+- Audit Logs
+- Analytics Dashboard
+- CSV Import/Export
+
+---
+
+# 📌 Status
 
 Planning Phase
 
 Ready for:
 
-- Prisma Schema Design
-- Database Architecture
-- NestJS Module Setup
-- React Dashboard UI Development
+- Database Design
+- Prisma Schema Development
+- NestJS Module Development
+- React Dashboard Development
 - API Design
 
 ---

@@ -2,10 +2,10 @@
 
 ## Design Philosophy
 
-* Clean
-* Minimal
-* Corporate
-* Fast navigation
+- Clean
+- Minimal
+- Corporate
+- Fast navigation
 
 ---
 
@@ -15,12 +15,12 @@ Sidebar + Header + Content
 
 Desktop:
 
-* Fixed sidebar
-* Sticky header
+- Fixed sidebar
+- Sticky header
 
 Mobile:
 
-* Drawer sidebar
+- Drawer sidebar
 
 ---
 
@@ -28,17 +28,17 @@ Mobile:
 
 Use tables for:
 
-* Employees
-* Assets
-* Requests
-* Departments
+- Employees
+- Assets
+- Requests
+- Departments
 
 Features:
 
-* Search
-* Sorting
-* Pagination
-* Filters
+- Search
+- Sorting
+- Pagination
+- Filters
 
 ---
 
@@ -48,9 +48,9 @@ Use React Hook Form.
 
 Requirements:
 
-* Inline validation
-* Error messages
-* Loading states
+- Inline validation
+- Error messages
+- Loading states
 
 ---
 
@@ -58,24 +58,24 @@ Requirements:
 
 Employee Status:
 
-* WORKING
-* ON_NOTICE
-* RESIGNED
-* TERMINATED
+- WORKING
+- ON_NOTICE
+- RESIGNED
+- TERMINATED
 
 Asset Status:
 
-* AVAILABLE
-* ALLOCATED
-* MAINTENANCE
-* TRASHED
+- AVAILABLE
+- ALLOCATED
+- MAINTENANCE
+- TRASHED
 
 Request Status:
 
-* PENDING
-* APPROVED
-* REJECTED
-* COMPLETED
+- PENDING
+- APPROVED
+- REJECTED
+- COMPLETED
 
 ---
 
@@ -83,13 +83,13 @@ Request Status:
 
 Admin Dashboard
 
-* Total Employees
-* Working Employees
-* Assets Allocated
-* Pending Requests
+- Total Employees
+- Working Employees
+- Assets Allocated
+- Pending Requests
 
 Employee Dashboard
 
-* My Assets
-* Open Requests
-* Recent Activity
+- My Assets
+- Open Requests
+- Recent Activity
