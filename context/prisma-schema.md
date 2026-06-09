@@ -1,0 +1,206 @@
+# Prisma Schema Blueprint (Simplified)
+
+```prisma
+enum Role {
+  ADMIN
+  EMPLOYEE
+}
+
+enum EmployeeStatus {
+  WORKING
+  ON_NOTICE
+  RESIGNED
+  TERMINATED
+}
+
+enum AssetCategory {
+  LAPTOP
+  MOUSE
+  KEYBOARD
+  HEADSET
+  EARPHONE
+  MOBILE_PHONE
+  SCREEN
+  COOLING_PAD
+  IPAD
+}
+
+enum AssetStatus {
+  AVAILABLE
+  ALLOCATED
+  MAINTENANCE
+  TRASHED
+}
+
+enum RequestType {
+  NEW_ASSET
+  REMOVE_ASSET
+  MAINTENANCE
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+}
+
+model Department {
+  id          String      @id @default(uuid()) @db.Uuid
+  name        String      @unique
+
+  employees   Employee[]
+
+  created_at  DateTime    @default(now())
+  updated_at  DateTime    @updatedAt
+
+  @@map("departments")
+}
+
+model Employee {
+  id                    String            @id @default(uuid()) @db.Uuid
+
+  employee_code         String            @unique
+
+  first_name            String
+  last_name             String
+
+  official_email        String            @unique
+  personal_email        String            @unique
+
+  password              String
+
+  role                  Role              @default(EMPLOYEE)
+
+  present_address       String
+  permanent_address     String
+
+  joining_date          DateTime
+
+  status                EmployeeStatus    @default(WORKING)
+
+  department_id         String            @db.Uuid
+  department            Department        @relation(fields: [department_id], references: [id])
+
+  reporting_manager_id  String?           @db.Uuid
+
+  reporting_manager Employee? @relation(
+    "ReportingManager",
+    fields: [reporting_manager_id],
+    references: [id]
+  )
+
+  direct_reports Employee[] @relation("ReportingManager")
+
+  assets Asset[]
+
+  asset_requests AssetRequest[]
+
+  asset_allocation_history AssetAllocationHistory[]
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@index([department_id])
+  @@index([status])
+  @@index([role])
+  @@index([reporting_manager_id])
+
+  @@map("employees")
+}
+
+model Asset {
+  id                    String          @id @default(uuid()) @db.Uuid
+
+  asset_serial_number   String          @unique
+
+  asset_category        AssetCategory
+
+  status                AssetStatus     @default(AVAILABLE)
+
+  allocated_to_id       String?         @db.Uuid
+
+  allocated_to Employee? @relation(
+    fields: [allocated_to_id],
+    references: [id],
+    onDelete: SetNull
+  )
+
+  requests AssetRequest[]
+
+  allocation_history AssetAllocationHistory[]
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@index([status])
+  @@index([asset_category])
+  @@index([allocated_to_id])
+
+  @@map("assets")
+}
+
+model AssetAllocationHistory {
+  id String @id @default(uuid()) @db.Uuid
+
+  asset_id String @db.Uuid
+  asset Asset @relation(
+    fields: [asset_id],
+    references: [id]
+  )
+
+  employee_id String @db.Uuid
+  employee Employee @relation(
+    fields: [employee_id],
+    references: [id]
+  )
+
+  allocated_at DateTime @default(now())
+
+  returned_at DateTime?
+
+  remarks String?
+
+  created_at DateTime @default(now())
+
+  @@index([asset_id])
+  @@index([employee_id])
+
+  @@map("asset_allocation_history")
+}
+
+model AssetRequest {
+  id String @id @default(uuid()) @db.Uuid
+
+  employee_id String @db.Uuid
+
+  employee Employee @relation(
+    fields: [employee_id],
+    references: [id]
+  )
+
+  asset_id String? @db.Uuid
+
+  asset Asset? @relation(
+    fields: [asset_id],
+    references: [id]
+  )
+
+  request_type RequestType
+
+  status RequestStatus @default(PENDING)
+
+  description String
+
+  admin_response String?
+
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@index([employee_id])
+  @@index([status])
+  @@index([request_type])
+
+  @@map("asset_requests")
+}
+```
