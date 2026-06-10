@@ -51,8 +51,13 @@ model Department {
 
   employees   Employee[]
 
+  is_deleted  Boolean     @default(false)
+  deleted_at  DateTime?
+
   created_at  DateTime    @default(now())
   updated_at  DateTime    @updatedAt
+
+  @@index([is_deleted])
 
   @@map("departments")
 }
@@ -98,6 +103,9 @@ model Employee {
 
   asset_allocation_history AssetAllocationHistory[]
 
+  is_deleted Boolean @default(false)
+  deleted_at DateTime?
+
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 
@@ -105,6 +113,7 @@ model Employee {
   @@index([status])
   @@index([role])
   @@index([reporting_manager_id])
+  @@index([is_deleted])
 
   @@map("employees")
 }
@@ -130,12 +139,16 @@ model Asset {
 
   allocation_history AssetAllocationHistory[]
 
+  is_deleted Boolean @default(false)
+  deleted_at DateTime?
+
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 
   @@index([status])
   @@index([asset_category])
   @@index([allocated_to_id])
+  @@index([is_deleted])
 
   @@map("assets")
 }
@@ -194,12 +207,16 @@ model AssetRequest {
 
   admin_response String?
 
+  is_deleted Boolean @default(false)
+  deleted_at DateTime?
+
   created_at DateTime @default(now())
   updated_at DateTime @updatedAt
 
   @@index([employee_id])
   @@index([status])
   @@index([request_type])
+  @@index([is_deleted])
 
   @@map("asset_requests")
 }
