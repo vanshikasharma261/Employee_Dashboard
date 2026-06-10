@@ -38,8 +38,9 @@ export interface EmployeeSeed {
   reporting_manager_code?: string;
 }
 
-const DEFAULT_EMPLOYEE_PASSWORD = 'Password@123';
-const ADMIN_PASSWORD = 'Admin@123';
+const DEFAULT_EMPLOYEE_PASSWORD =
+  process.env.SEED_EMPLOYEE_PASSWORD ?? 'password';
+const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD ?? 'password';
 
 export const employeesSeedData: EmployeeSeed[] = [
   // ----- Administrator (pre-seeded) -----

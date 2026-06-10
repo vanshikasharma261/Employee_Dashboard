@@ -36,6 +36,15 @@ if (!connectionString) {
   throw new Error('DATABASE_URL is not set — cannot run the database seed.');
 }
 
+// Safety guard: this seed inserts dev/demo data (incl. accounts with public
+// default passwords). Refuse to run it against a production database.
+if (process.env.NODE_ENV === 'production') {
+  throw new Error(
+    'Refusing to run the database seed with NODE_ENV=production. ' +
+      'Seed data is for local development and demos only.',
+  );
+}
+
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString }),
 });
@@ -84,38 +93,36 @@ async function seedEmployees(
       }
     }
 
-    const passwordHash = await bcrypt.hash(employee.password, BCRYPT_SALT_ROUNDS);
+    // Mutable profile fields, shared by create + update (single source of truth,
+    // so adding a field can't silently diverge between the two branches).
+    // Deliberately EXCLUDED from `update`:
+    //   - employee_code: immutable business key (the upsert `where`).
+    //   - official_email / personal_email: unique natural keys — overwriting them
+    //     on a re-run risks a P2002 clash with another existing row.
+    //   - password: never re-hashed on a re-run — avoids silently rotating
+    //     credentials and pointless updated_at churn (bcrypt salts every call).
+    const profileData = {
+      first_name: employee.first_name,
+      last_name: employee.last_name,
+      role: employee.role,
+      present_address: employee.present_address,
+      permanent_address: employee.permanent_address,
+      joining_date: new Date(employee.joining_date),
+      status: employee.status,
+      department_id: departmentId,
+      reporting_manager_id: reportingManagerId ?? null,
+    };
 
     const record = await prisma.employee.upsert({
       where: { employee_code: employee.employee_code },
-      update: {
-        first_name: employee.first_name,
-        last_name: employee.last_name,
-        official_email: employee.official_email,
-        personal_email: employee.personal_email,
-        password: passwordHash,
-        role: employee.role,
-        present_address: employee.present_address,
-        permanent_address: employee.permanent_address,
-        joining_date: new Date(employee.joining_date),
-        status: employee.status,
-        department_id: departmentId,
-        reporting_manager_id: reportingManagerId ?? null,
-      },
+      update: profileData,
       create: {
         employee_code: employee.employee_code,
-        first_name: employee.first_name,
-        last_name: employee.last_name,
         official_email: employee.official_email,
         personal_email: employee.personal_email,
-        password: passwordHash,
-        role: employee.role,
-        present_address: employee.present_address,
-        permanent_address: employee.permanent_address,
-        joining_date: new Date(employee.joining_date),
-        status: employee.status,
-        department_id: departmentId,
-        reporting_manager_id: reportingManagerId ?? null,
+        // Hashed and stored only on first insert; left untouched on re-runs.
+        password: await bcrypt.hash(employee.password, BCRYPT_SALT_ROUNDS),
+        ...profileData,
       },
     });
 

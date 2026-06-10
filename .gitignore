@@ -1,0 +1,8 @@
+# Claude Code local settings (contains secrets)
+.claude/settings.local.json
+
+# Environment files (never commit secrets) — applies to every subdirectory.
+# Committed reference lives in *.env.example files instead.
+.env
+**/.env
+!**/.env.example
