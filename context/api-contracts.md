@@ -24,6 +24,8 @@ PATCH /employees/:id/status
 
 DELETE /employees/:id
 
+GET /employees/me
+
 ---
 
 ## Department

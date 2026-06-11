@@ -32,5 +32,9 @@ import { JwtStrategy } from './strategies/jwt.strategy';
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy],
+  // Exported so Employee, Department, Asset, Allocation and Request modules can
+  // inject AuthService and reuse `isUserActive()` for service-level session
+  // checks. Importing modules must also import AuthModule to receive it.
+  exports: [AuthService],
 })
 export class AuthModule {}
