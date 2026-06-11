@@ -95,6 +95,9 @@ model Employee {
 
   status EmployeeStatus @default(WORKING)
 
+  is_active          Boolean @default(false)
+  refresh_token_hash String?
+
   department_id String     @db.Uuid
   department    Department @relation(fields: [department_id], references: [id])
 

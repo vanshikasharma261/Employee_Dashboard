@@ -24,9 +24,21 @@ export class EnvironmentVariables {
   @IsNotEmpty()
   JWT_EXPIRES_IN!: string;
 
+  @IsString()
+  @IsNotEmpty()
+  JWT_REFRESH_SECRET!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  JWT_REFRESH_EXPIRES_IN!: string;
+
   @IsOptional()
   @IsString()
   PORT?: string;
+
+  @IsOptional()
+  @IsString()
+  FRONTEND_URL?: string;
 }
 
 export function validateEnv(
