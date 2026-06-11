@@ -174,6 +174,24 @@ export class AuthService {
     return { success: true, message: 'Token refreshed successfully' };
   }
 
+  /**
+   * Service-level session check reusable across modules.
+   *
+   * Reads the latest `is_active` flag for the authenticated employee straight
+   * from the database rather than trusting the JWT payload, so a session
+   * revoked since the token was issued (e.g. logout, refresh-reuse revoke) is
+   * reflected immediately. Read-only: it never writes, issues tokens, or
+   * mutates session state — it only returns a boolean.
+   */
+  async isUserActive(user: Express.User): Promise<boolean> {
+    const employee = await this.prisma.employee.findUnique({
+      where: { id: user.id },
+      select: { is_active: true },
+    });
+
+    return employee?.is_active ?? false;
+  }
+
   async logout(
     employeeId: string,
     res: Response,
