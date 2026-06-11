@@ -1,111 +1,137 @@
 ## Current Feature
 
-**004 — AuthService Session Validation Utility**
+**005 — Employee Management Module**
 
-Add a small, reusable service-level session-validation helper (`AuthService.isUserActive`) for future modules to call before running protected business logic. It reads the latest `Employee.is_active` straight from the database — an extra safeguard layered on top of the JWT strategy, not a replacement — so a session revoked after token issue is caught immediately. Backend-only; no schema, route, or auth-flow changes.
+Implement all employee-related backend APIs: full CRUD for administrators plus a self-profile endpoint for any authenticated employee. Follows the established architecture (Controller → Service → PrismaService → PostgreSQL) with all business logic confined to the service layer. Backend-only; **no schema changes** (the `Employee` model already exists with every field this feature needs).
 
-Spec: [specs/004-auth-validity.md](../specs/004-auth-validity.md)
+Spec: [specs/005-employee-crud-apis.md](../specs/005-employee-crud-apis.md)
 
 ## Status
 
-Completed — implemented, built, and linted. Module-level integration is deferred: no Employee/Department/Asset modules exist yet to consume it.
+**Completed & verified** — all 7 endpoints implemented, built, linted, and manually tested end-to-end against a running server. Both open questions resolved: (1) `employee_code` is **auto-generated** (`EMPxxx`, sequential) in the service create transaction — not a DTO input; (2) messages live at the existing singular `src/constant/messages.constant.ts`.
 
 ## Goal
 
-Provide one centralized `isUserActive(user)` check, reusable across Employee, Department, Asset, Allocation, and Request modules, that always validates the current `Employee.is_active` value from the database (never the JWT payload), returning only a boolean.
+Provide secure employee APIs so administrators can fully manage employee records (create, list, read, update, change status, soft delete) and any authenticated employee can fetch their own profile — establishing the employee foundation that Department, Asset, Allocation, and Request features depend on.
 
 ---
 
-## Implementation
+## Scope
 
-### Express User type augmentation
+### Endpoints (all under global `/api` prefix — do **not** repeat `/api` in routes)
 
-`backend/src/types/express.d.ts` (new) — declaration merging onto Express's `User`:
+| Method | Route | Access | Purpose |
+|--------|-------|--------|---------|
+| GET | `/employees` | ADMIN | List active (non-deleted) employees; pagination + search |
+| GET | `/employees/me` | ADMIN, EMPLOYEE | Current authenticated employee's profile (from `request.user`) |
+| GET | `/employees/:id` | ADMIN | Single employee (must exist, not deleted) |
+| POST | `/employees` | ADMIN | Create employee |
+| PATCH | `/employees/:id` | ADMIN | Update employee |
+| PATCH | `/employees/:id/status` | ADMIN | Update employee status |
+| DELETE | `/employees/:id` | ADMIN | Soft delete |
 
-```ts
-import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+> **Route ordering:** declare `GET /employees/me` **before** `GET /employees/:id` in the controller so `me` is not captured as an `:id`.
 
-declare global {
-  namespace Express {
-    interface User extends AuthenticatedUser {}
-  }
-}
+### Module structure (`backend/src/employee`)
 
-export {};
+```text
+employee.module.ts
+employee.controller.ts        # thin — no business logic
+employee.service.ts           # all rules live here, Prisma access here
+dto/
+  create-employee.dto.ts      # CreateEmployeeDto
+  update-employee.dto.ts      # UpdateEmployeeDto extends PartialType(CreateEmployeeDto)
+  update-employee-status.dto.ts
 ```
 
-- Reuses the existing `AuthenticatedUser` interface (`id`, `email`, `role`) — it is not redefined.
-- `tsconfig.json` has no `include`, so all of `src/**` (including `.d.ts`) is already compiled and the declaration merge is auto-discovered. No tsconfig change needed.
-- ESLint's `@typescript-eslint/no-empty-object-type` is disabled on that one line — the empty body is the intended merge pattern, not a mistake.
+### Dependencies / wiring
 
-### Helper method
+- `EmployeeModule` imports `PrismaModule` and `AuthModule`.
+- `EmployeeService` injects `PrismaService` and `AuthService`.
+- Before running protected business logic, call the existing `AuthService.isUserActive(user)` (feature 004); if it returns `false`, throw `UnauthorizedException(AuthMessages.UNAUTHORIZED_EXCEPTION)`.
 
-`backend/src/auth/auth.service.ts`:
+---
 
-```ts
-async isUserActive(user: Express.User): Promise<boolean> {
-  const employee = await this.prisma.employee.findUnique({
-    where: { id: user.id },
-    select: { is_active: true },
-  });
+## Authorization
 
-  return employee?.is_active ?? false;
-}
-```
+- **Admin routes** (`GET /employees`, `GET /employees/:id`, `POST`, `PATCH /:id`, `PATCH /:id/status`, `DELETE /:id`): `@UseGuards(JwtAuthGuard, RolesGuard)` + `@Roles(Role.ADMIN)`.
+- **Self route** (`GET /employees/me`): `@UseGuards(JwtAuthGuard)` only.
 
-- Read-only: no writes, no token generation, no session mutation.
-- Always reads the live DB value rather than the JWT payload (source of truth = `Employee.is_active`).
+> **Naming note:** the spec writes `EmployeeRole.ADMIN`, but the generated enum in this codebase is `Role` (`src/generated/prisma/client`), and the existing `@Roles` decorator is typed `(...roles: Role[])`. Use `Role.ADMIN` for consistency with the auth module already in place.
 
-### Module export
+---
 
-`AuthModule` now `exports: [AuthService]` so future Employee/Department/Asset/Allocation/Request modules can inject it (they must also import `AuthModule`).
+## Business rules to enforce (service layer)
 
-### Messages constant
+**Create** (`CreateEmployeeDto`):
+- Required: `first_name`, `last_name`, `official_email`, `personal_email`, `password`, `role`, `department_name`, `present_address`, `permanent_address`, `joining_date`.
+- Optional: `reporting_manager_official_email`.
+- Resolve **`department_name` → `department_id`**: department must exist and not be soft deleted, else `BadRequest`/`NotFound` (`DEPARTMENT_NOT_FOUND`).
+- `official_email` and `personal_email` must be unique → `ConflictException` (`EMAIL_ALREADY_EXISTS`).
+- Resolve **`reporting_manager_official_email` → `reporting_manager_id`** when provided: manager must exist, not be deleted, have `status = WORKING`, and cannot be the employee themselves → `REPORTING_MANAGER_NOT_FOUND` / appropriate `BadRequest`.
+- Hash `password` with `bcrypt.hash()` before persistence.
+- Server-set defaults: `status = WORKING`, `is_deleted = false`, `is_active = false`, `refresh_token_hash = null`, `deleted_at = null`. DB generates `id`, `created_at`, `updated_at`.
+- **Reject system-managed fields if sent in the body**: `id`, `status`, `created_at`, `updated_at`, `deleted_at`, `is_deleted`, `is_active`, `refresh_token_hash` (the global `ValidationPipe({ whitelist: true })` already strips unknown props; keep these out of the DTO).
 
-`backend/src/constant/messages.constant.ts` (new):
+**Update** (`UpdateEmployeeDto extends PartialType(CreateEmployeeDto)`):
+- Employee must exist and not be deleted.
+- Re-validate uniqueness for any changed email, re-validate department/manager if changed, re-hash password if provided.
 
-```ts
-export const AuthMessages = {
-  UNAUTHORIZED_EXCEPTION: 'User session is inactive',
-} as const;
-```
+**Update status** (`UpdateEmployeeStatusDto`):
+- `@IsEnum(EmployeeStatus)` — one of `WORKING | ON_NOTICE | RESIGNED | TERMINATED`.
+- Admin only. Employee history must never be deleted (status change only).
 
-**Deviation from spec:** placed in `src/constant/` (singular) to match the existing `src/constant/values.constant.ts`, not the spec's plural `src/constants/`.
+**Soft delete** (`DELETE /:id`):
+- Employee must exist and not already be deleted.
+- Set `is_deleted = true`, `deleted_at = new Date()`. Never physically remove.
 
-Intended call-site usage in future modules:
+---
 
-```ts
-const status = await this.authService.isUserActive(user);
-if (!status) {
-  throw new UnauthorizedException(AuthMessages.UNAUTHORIZED_EXCEPTION);
-}
-```
+## Security / response safety
+
+- **Never** return `password`, `refresh_token_hash`, `is_deleted`, `deleted_at`, `created_at`, `updated_at` from any employee endpoint — select an explicit safe field set (do not `select` the excluded columns) rather than fetching-then-deleting.
+- Include `department` info, and `reporting_manager` info when present, in list/detail responses.
+- All list/read queries must exclude soft-deleted employees (`where: { is_deleted: false }`).
+- Passwords always stored as bcrypt hashes, never plain text.
+
+---
+
+## DTO validation
+
+`class-validator` / `class-transformer`: `@IsString()`, `@IsNotEmpty()`, `@IsEmail()` (emails), `@IsEnum(Role)` (role), `@IsEnum(EmployeeStatus)` (status DTO), `@IsDateString()` (`joining_date`), `@IsOptional()` (`reporting_manager_official_email`). Mirror the existing `LoginDto` style (trim/lowercase emails via `@Transform` where appropriate).
+
+## Messages
+
+Add a new `EmployeeMessages` object to the **existing** `backend/src/constant/messages.constant.ts` (singular `constant/` — matching the established codebase layout, **not** the spec's plural `src/constants/`). Suggested keys: `EMPLOYEE_NOT_FOUND`, `EMPLOYEE_CREATED_SUCCESSFULLY`, `EMPLOYEE_UPDATED_SUCCESSFULLY`, `EMPLOYEE_DELETED_SUCCESSFULLY`, `EMPLOYEE_ALREADY_DELETED`, `DEPARTMENT_NOT_FOUND`, `EMAIL_ALREADY_EXISTS`, `REPORTING_MANAGER_NOT_FOUND`, `CANNOT_REPORT_TO_SELF`. No hardcoded strings at throw sites.
+
+---
+
+## Open questions (resolve before/while implementing)
+
+1. **`employee_code`** — the schema requires `employee_code String @unique` (no default), but the spec's `CreateEmployeeDto` does **not** list it as an input. Decision needed: auto-generate it in the service (e.g. a sequence/prefix scheme, as the seed data used as a business key) **or** add it to the DTO as a required unique input. Cannot create an employee without one.
+2. **Messages directory** — spec says `src/constants/` (plural); codebase uses `src/constant/` (singular). Plan follows the existing singular path for consistency; confirm this is acceptable.
 
 ---
 
 ## Definition of Done (from spec)
 
-- [x] Existing `AuthenticatedUser` interface reused.
-- [x] Express `User` declaration merging implemented.
-- [x] `src/types/express.d.ts` created.
-- [x] `isUserActive()` added to `AuthService`.
-- [x] Method accepts `Express.User`.
-- [x] Method validates `Employee.is_active` using `user.id`.
-- [x] Method returns `Promise<boolean>`.
-- [x] No database updates performed.
-- [x] `AuthMessages.UNAUTHORIZED_EXCEPTION` added.
-- [ ] Utility successfully used by Employee module services — **deferred** (no Employee module exists yet; utility is exported and ready).
-- [x] Build passes.
-- [x] Lint passes.
+- [x] APIs: Get All, Get By Id, Create, Update, Update Status, Soft Delete, Get Current — all implemented.
+- [x] DTOs: `CreateEmployeeDto`, `UpdateEmployeeDto`, `UpdateEmployeeStatusDto` implemented with validation.
+- [x] Admin routes protected with `JwtAuthGuard + RolesGuard + @Roles(Role.ADMIN)`; `/employees/me` protected with `JwtAuthGuard`.
+- [x] Department, reporting-manager, email-uniqueness validation + password hashing + soft delete implemented.
+- [x] Sensitive fields excluded from all responses; passwords stored as bcrypt hashes.
+- [x] Soft-deleted employees excluded from queries; unauthorized/role-restricted access blocked.
+- [x] `AuthService.isUserActive` inactive-session guard wired in.
+- [x] `npm run build` passes; `npm run lint` passes; manual API testing completed.
 
 ---
 
 ## Notes / decisions
 
-- Schema is the source of truth — no fields invented; the helper only reads the existing `Employee.is_active`.
-- Messages constant kept under the existing singular `src/constant/` directory (spec said plural `src/constants/`).
-- `AuthService` is now exported from `AuthModule`; consuming modules import `AuthModule` to receive it.
-- This is layered on top of `JwtStrategy` (which already rejects inactive sessions at the guard level) — a deliberate service-level safeguard that re-reads the DB, useful for long-lived requests where the session may be revoked mid-flight.
+- Schema is the source of truth — no invented fields. The `Employee` model already carries everything (`status`, `is_active`, `refresh_token_hash`, soft-delete fields, reporting-manager self-relation), so **no migration is required** for this feature.
+- Reuses the auth module built in features 003/004: `JwtAuthGuard`, `RolesGuard`, `@Roles(Role.ADMIN)`, and the exported `AuthService.isUserActive`.
+- Input uses business keys (`department_name`, `reporting_manager_official_email`) which the service resolves to FKs (`department_id`, `reporting_manager_id`) — consistent with how the seed data referenced relationships by business key.
+- Suggested branch: `feature/employee-module` (per development-rules git naming).
 
 ## History
 
@@ -120,3 +146,7 @@ if (!status) {
 - 2026-06-11 — **Implemented & verified (003).** Branched `feature/authentication` off main. Added deps `@nestjs/jwt`, `@nestjs/passport`, `passport`, `passport-jwt`, `cookie-parser` (+ `@types/passport-jwt`, `@types/cookie-parser`). Added `JWT_REFRESH_SECRET` / `JWT_REFRESH_EXPIRES_IN` (required) to `env.validation.ts` (they were already present in `.env`). Added `is_active Boolean @default(false)` + `refresh_token_hash String?` to the Employee model; generated & applied migration `20260611062935_add_authentication_session_fields` (additive `ALTER TABLE` only — existing seed data preserved: 12 employees / 6 departments / 19 assets intact); regenerated the client. Built the full `src/auth` module: thin controller (`POST /auth/login|refresh|logout`, `@HttpCode(200)`, `@Res({ passthrough:true })`), service with all logic, `LoginDto` (email `@Transform` trim+lowercase, password `@IsString/@IsNotEmpty`), `JwtStrategy` (cookie extractor, reloads employee, rejects missing/soft-deleted/inactive), `JwtAuthGuard`, `RolesGuard` + `@Roles` decorator (Reflector-based RBAC), interfaces. Wired `main.ts`: `cookieParser()` + global `ValidationPipe({ whitelist, transform })` with field-keyed `exceptionFactory`. Registered `AuthModule` in `app.module.ts` (imports PrismaModule explicitly, JwtModule.registerAsync via ConfigService — per-token secret/expiry passed explicitly when signing/verifying). Tokens delivered as httpOnly cookies (`secure` in prod, `sameSite: 'lax'`, maxAge mirrors TTL). **Two implementation decisions worth noting:** (a) `JwtSignOptions.expiresIn` requires the `ms` `StringValue` union, so the validated env string is cast to `JwtSignOptions['expiresIn']`; (b) **refresh-token rotation bug found during manual testing & fixed** — bcrypt only hashes the first 72 bytes, and two of the same employee's 249-byte refresh JWTs share their first 72 bytes (header + leading `sub`), so `bcrypt(rawToken)` could not distinguish them and the old token still validated after rotation. Fix (user-approved): SHA-256 the token to a 64-hex digest before `bcrypt.hash`/`bcrypt.compare` (still bcrypt + bcrypt.compare per spec). **Verified end-to-end against a running server:** valid login → 200 + both cookies + `is_active=true` + bcrypt hash stored; invalid email/password → 401 (generic, no leak); bad email format → 400 field-keyed (`{"email":...,"password":...}`); forged access token → 401; refresh rotation works and **invalidates the old token** (old → 401, current → 200); logout → 200 + `is_active=false` + `refresh_token_hash=null`; refresh after logout (inactive) → 401. `npm run build` and `npm run lint` both pass. **Tooling note:** Windows Defender false-positive-quarantined `node_modules/prisma/build/index.js` (`Trojan:JS/ShaiWorm.DBA!MTB`, ML heuristic) on install, blocking all Prisma CLI commands; confirmed false positive (only that one bundled file ever flagged, across every copy) — resolved via a scoped Defender folder exclusion + restore, then reinstalled. Status: Completed.
 
 - 2026-06-11 — **Implemented & verified (004 — AuthService session-validation utility).** Read spec `specs/004-auth-validity.md`. Added a small, forward-looking helper for future modules. Changes: (1) created `backend/src/types/express.d.ts` — declaration merging `interface User extends AuthenticatedUser` under `namespace Express` (reuses the existing `AuthenticatedUser` interface; not redefined), so `request.user` / `Express.User` carries `id`/`email`/`role`. `tsconfig.json` has no `include`, so `src/**` (incl. `.d.ts`) is already compiled and the merge auto-discovers; disabled ESLint `@typescript-eslint/no-empty-object-type` on that one line since the empty body is the intended merge pattern. (2) Added `AuthService.isUserActive(user: Express.User): Promise<boolean>` — `findUnique` on `user.id` with `select: { is_active: true }`, returns `employee?.is_active ?? false`; read-only (no writes, no token generation, no session mutation), always reads the live DB value rather than the JWT payload. (3) `AuthModule` now `exports: [AuthService]` so future Employee/Department/Asset/Allocation/Request modules can inject it (they must also import `AuthModule`). (4) Added `AuthMessages.UNAUTHORIZED_EXCEPTION = 'User session is inactive'`. **Deviation from spec:** placed the messages constant at `backend/src/constant/messages.constant.ts` (singular `constant/`) to match the existing `src/constant/values.constant.ts`, not the spec's plural `src/constants/`. **Integration deferred:** the DoD item "used by Employee module services" cannot be completed yet — no Employee/Department/Asset modules exist; the utility is ready and exported for them to consume. `npm run build` and `npm run lint` both pass. Status: Completed.
+
+- 2026-06-11 — **Started feature 005 (Employee Management Module).** Read spec `specs/005-employee-crud-apis.md` and all referenced context (project-overview, business-rules, database-design, development-rules, prisma-schema, api-contracts) plus the live backend (Employee schema model, auth module: `@Roles`/`Role`, guards, `AuthenticatedUser`, `AuthService.isUserActive`, `messages.constant.ts`). Rewrote current-feature.md with the 005 plan: 7 endpoints (CRUD + status + soft delete + `/employees/me`), the `src/employee` module layout (thin controller, service-only logic, 3 DTOs), authorization matrix (`JwtAuthGuard + RolesGuard + @Roles(Role.ADMIN)` for admin routes; `JwtAuthGuard` for `/me`), full business-rule set (department/manager/email-uniqueness validation, bcrypt hashing, server-set defaults, soft delete, inactive-session guard via `AuthService.isUserActive`), response-safety field exclusions, DTO validation decorators, and the new `EmployeeMessages` constant. **No schema change / no migration** — the Employee model already has every field. **Flagged two discrepancies:** (1) spec says `EmployeeRole.ADMIN` but the codebase enum is `Role` (use `Role.ADMIN`); (2) `employee_code` is a required `@unique` schema field absent from the spec's CreateEmployeeDto — needs a decision (auto-generate vs. accept as input). Also noted route ordering (`/me` before `/:id`) and the singular `constant/` messages path. Status: Not Started, ready to implement.
+
+- 2026-06-11 — **Implemented & verified (005 — Employee Management Module).** Branched `feature/employee-crud-apis` off main. Installed `@nestjs/mapped-types@2.1.1` (was missing) for `PartialType` in `UpdateEmployeeDto`. Created `src/employee/` (module, thin controller, service, 3 DTOs). **Decisions:** (1) `employee_code` auto-generated `EMPxxx` (user-approved) — `generateEmployeeCode(tx)` reads the current max inside the create `$transaction` and increments (zero-padded to 3), matching the seed convention; not a DTO field. (2) Used `Role.ADMIN` (codebase enum), not the spec's `EmployeeRole`. (3) Messages added as `EmployeeMessages` in the existing singular `src/constant/messages.constant.ts`; added `PASSWORD_HASH_ROUNDS` (10) + list-limit constants to `values.constant.ts`. **Service design:** every admin method calls `assertActiveSession` → `AuthService.isUserActive` (throws `UnauthorizedException(AuthMessages.UNAUTHORIZED_EXCEPTION)` if inactive); a single `EMPLOYEE_SAFE_SELECT` (typed `satisfies Prisma.EmployeeSelect`) is the only projection used by every endpoint, so `password`/`refresh_token_hash`/`is_active`/`is_deleted`/`deleted_at`/`created_at`/`updated_at` are never selected; includes `department` + `reporting_manager` summaries. Business keys (`department_name`, `reporting_manager_official_email`) resolved to FKs in the service; email-uniqueness checked across **all** rows (the `@unique` constraint spans soft-deleted too); manager must exist + not deleted + WORKING + not self; password bcrypt-hashed; create sets server defaults explicitly; P2002 races mapped to friendly conflicts via `toWriteError`. Controller: `@Query` page/limit/search (parsed+clamped in service), `ParseUUIDPipe` on `:id`, `/employees/me` declared before `/:id`. **Return shapes:** list → `{ data, pagination }`; reads → safe employee; mutations → `{ message, data }`; delete → `{ message }`. Registered `EmployeeModule` in `app.module.ts`. **Manual testing — 23 scenarios, all pass** against a running server (admin `Admin@123`): login; `/me`; paginated list (total 12, safe fields); search; create (auto `EMP013`, w/ manager); duplicate-email 409; bad-department 404; self-report 400; manager-not-WORKING 400 (anika.verma ON_NOTICE); DTO validation 400 (bad email + short password, field-keyed); update (name+dept); status update; bad-enum 400; bad-UUID 400; soft delete; double-delete 400; soft-deleted excluded from GET/:id (404) & list; unauthenticated 401; EMPLOYEE→admin routes 403; EMPLOYEE→`/me` 200. Note: seeded **employee** passwords don't match the current `.env` `SEED_EMPLOYEE_PASSWORD` (admin does) — RBAC tested via a freshly-created known-password account. Test rows (EMP013/EMP014) hard-deleted afterward; DB back to the original 12 seeded employees. `npm run build` and `npm run lint` both pass. Status: Completed.
