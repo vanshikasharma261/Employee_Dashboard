@@ -1,276 +1,222 @@
 ## Current Feature
 
-**008 + 009 — Asset Request Management + Asset Allocation History Modules** (implemented together)
+**010 — Frontend Foundation, Authentication & Application Layout**
 
-Implement two correlated backend modules in one feature branch:
+First frontend feature. Establish the scalable React + Redux Toolkit architecture that every future UI module (011 Employee, 012 Department, 013 Asset, 014 Asset Request, 015 Dashboard Analytics) builds on **without major refactoring**: routing, real cookie-based authentication against the existing backend, Redux store + typed hooks, role-based protected routes, Admin/Employee layouts with the dark sidebar from the design screenshots, a centralized API service layer, global TypeScript types, and the dashboard shells (placeholder data).
 
-- **008 — Asset Request Management** (`src/asset-request`): the workflow engine. Both employees and admins (an admin is also a company employee — they too need assets, can send them for maintenance, and return them) raise asset requests (`NEW_ASSET` / `REMOVE_ASSET` / `MAINTENANCE`); admins list, view, **approve**, or **reject** them. Approval is the *only* path that mutates asset allocation/status — it runs inside a Prisma transaction and drives the allocation/deallocation/maintenance side effects.
-- **009 — Asset Allocation History** (`src/asset-history`): the immutable, append-only audit log. Admin-only read APIs (all history, by-asset timeline, by-employee activity) plus internal `record*` service methods called by the Asset Request approval flow — never created/updated/deleted via API.
+**Out of scope** (dedicated later features): all CRUD screens, dashboard statistics wiring, tables/forms for entities. 010 ships *placeholders* for those routes/menus only.
 
-They are built together because **history is written as part of approval**: when a request is approved, the same transaction that mutates the asset also writes the matching history record. 009's `record*` methods are the integration point 008 calls.
+Spec: [specs/010-frontend-foundation.md](../specs/010-frontend-foundation.md)
 
-Specs: [specs/008-assets-requests-crud-apis.md](../specs/008-assets-requests-crud-apis.md) · [specs/009-asset-allocation-history-apis.md](../specs/009-asset-allocation-history-apis.md)
-
-Branch: `feature/asset-request-asset-history` (already created off `main`).
+Branch (to create off `main`, per development-rules naming): `feature/frontend-foundation`.
 
 ## Status
 
-**Completed & verified.** Both modules built, schema migration applied, client regenerated; `npm run build` and `npm run lint` pass; manual API testing done end-to-end (all flows, RBAC, validation, immutability); DB restored to pristine seed state afterward.
+**Implemented & verified (010).** Full frontend foundation built on branch `feature/frontend-foundation`; `npm run build` + `npm run lint` pass clean, dev server boots (HTTP 200), and the live backend auth contract was confirmed to match the implementation end-to-end. See the latest History entry.
 
 ## Goal
 
-Provide a centralized asset-request workflow so any employee (including admins) can request new assets, returns, and maintenance, and admins can approve/reject them — with every approval atomically updating the asset *and* appending an immutable history record, giving the organization a complete audit trail of asset allocation, deallocation, and maintenance events. Direct allocation/deallocation through the Asset module stays out of scope; all of it flows through request approval.
+Give the frontend a production-ready foundation: a user can log in against the real backend, be redirected by role, land in a role-appropriate layout with working sidebar navigation, and be blocked from routes their role can't access — with Redux state, a typed API layer, and a feature-slice/type scaffold in place so the CRUD modules that follow are pure feature work.
 
 ---
 
-## Request lifecycle (confirmed with user)
+## Critical backend reality — cookie-based auth (user-confirmed)
 
-```
-        raise (any type)            admin approve (admin_response)             admin reject (admin_response)
-PENDING ───────────────►  PENDING ──────────────────────────►  APPROVED  ──►  COMPLETED   (terminal, read-only)
-                                   └──────────────────────────►  REJECTED   (terminal, admin_response stored)
-```
+The existing backend (Feature 003) delivers JWT as **httpOnly cookies** and `POST /api/auth/login` returns only `{ success, message }` — **no role, no user object, no token in the body**. This overrides the spec's "JWT token persistence" / "Authorization header injection" wording. Consequences baked into this plan:
 
-On **approve** (single transaction, every request type follows the same flow):
+- The API layer uses **`fetch(..., { credentials: 'include' })`** so the browser sends/stores the httpOnly cookies. **No `Authorization` header, no `localStorage` token** (the cookie can't be read by JS and persists itself).
+- Login is a **two-step thunk**: `POST /auth/login` → on success `GET /employees/me` (returns the safe employee incl. `role`, `first_name`, `last_name`, `official_email`, `status`) → store user + role in auth state → redirect by role.
+- **Session rehydration on app boot/reload**: dispatch a `fetchCurrentUser` thunk that calls `GET /employees/me`. `200` → authenticated (restore user/role); `401` → unauthenticated → `/login`. This is what replaces "token persistence" — the cookie persists, and `/me` re-derives auth state.
+- **Logout**: `POST /auth/logout` (clears cookies + `is_active=false` server-side) → clear auth state → `/login`.
+- CORS is already configured for `http://localhost:5173` with `credentials: true` and `FRONTEND_URL` override — no backend change needed.
+- Backend base URL comes from `VITE_API_URL` (already in `.env.example` = `http://localhost:3000/api`).
 
-1. status `PENDING` → `APPROVED`, store `admin_response`.
-2. perform the asset side effect for the request type (allocate / deallocate / maintenance).
-3. write the history record with **`remarks = admin_response`**.
-4. status `APPROVED` → `COMPLETED` (terminal — completed requests are read-only).
-
-On **reject**: status `PENDING` → `REJECTED`, store `admin_response`; no asset mutation, no history record.
-
-> This supersedes two spec details: (a) spec 008 sets approved status to `APPROVED` only — we carry it through to `COMPLETED` per business-rules.md; (b) spec 009's fixed remark strings ("Asset allocation is done", etc.) are **not** used — history `remarks` are the admin's `admin_response` from the request.
+A `401` from **any** API call (e.g. cookie expired) should clear auth state and bounce to `/login` — handle centrally in `api.ts`.
 
 ---
 
-## ⚠️ Required schema change (one additive migration)
+## Navigation — follow the design screenshots (user-confirmed)
 
-Spec 009 needs an **`event_type`** on `AssetAllocationHistory` (used in the response body, the event-type query filter, and to distinguish the three `record*` methods). Neither the live `schema.prisma` nor `context/prisma-schema.md` has it today.
+The spec says screenshots are authoritative for navigation, and `admin_sidebar_ui.png` / `employee_sidebar_ui.png` win over the spec's prose. The admin sidebar shows **two sections** (Administration + Employee Portal), and the item is **"Hierarchy"**, not the spec text's "History".
 
-**Decision (user):** do **not** invent a parallel enum — **reuse the existing `RequestType` enum** as the event type, carried over from the `AssetRequest` that triggered the record. `RequestType` already has all three values needed, none left over:
+**Admin sidebar** (`AdminSidebar`):
 
-| Request approved | History `event_type` | Asset effect                          |
-| ---------------- | -------------------- | ------------------------------------- |
-| `NEW_ASSET`      | `NEW_ASSET`          | allocate → `ALLOCATED`, set owner     |
-| `REMOVE_ASSET`   | `REMOVE_ASSET`       | deallocate → `AVAILABLE`, clear owner |
-| `MAINTENANCE`    | `MAINTENANCE`        | → `MAINTENANCE`                       |
+- **Administration**: Dashboard, Employees, Departments, Hierarchy, Assets, Requests
+- **Employee Portal**: My Dashboard, My Assets, My Requests
+- Footer: avatar + name + "Administrator"
 
-Schema addition to `model AssetAllocationHistory`:
+**Employee sidebar** (`EmployeeSidebar`):
 
-```prisma
-event_type RequestType
-@@index([event_type])
-```
+- **Employee Portal**: My Dashboard, My Assets, My Requests
+- Footer: avatar + name + job title
 
-- Mirror the same change in `context/prisma-schema.md`.
-- New migration: `add_history_event_type` (additive `ALTER TABLE` adding a NOT NULL column — **safe**: the table is empty, 0 allocation-history rows seeded, so no backfill/default needed). Regenerate the Prisma client afterward.
-- The model stays immutable (no `is_deleted`, no `updated_at`) — append-only audit log.
+All target routes are **placeholders** in 010 (a simple "coming soon"/empty page). Brand block top-left: square logo + "Acme HR" + subtitle ("Management Suite" for admin, "Employee Portal" for employee). Collapsible sidebar toggle + search field + notification bell + avatar in the header, per the dashboard screenshots.
 
-This is the only schema change. Everything else in both modules uses existing fields.
+> Route paths reconciled with [context/frontend-routes.md](frontend-routes.md): Admin `/dashboard`, `/employees`, `/departments`, `/hierarchy`, `/assets`, `/asset-requests`; Employee `/dashboard` (My Dashboard), `/my-assets`, `/my-requests`, `/profile`. `frontend-routes.md` lists no `/hierarchy`; added to match the screenshot (placeholder). Final concrete paths can be tuned per module, but the menu set follows the screenshots.
 
 ---
 
-## Module structure
+## Folder structure (per spec, under `frontend/src`)
 
 ```text
-backend/src/asset-request
-├── asset-request.module.ts
-├── asset-request.controller.ts            # thin — delegates to service
-├── asset-request.service.ts               # all workflow logic + approval transaction
-└── dto/
-    ├── create-asset-request.dto.ts        # CreateAssetRequestDto
-    ├── approve-request.dto.ts             # ApproveRequestDto  { admin_response }
-    ├── reject-request.dto.ts              # RejectRequestDto   { admin_response }
-    └── list-asset-requests-query.dto.ts   # ListAssetRequestsQueryDto (added, mirrors 007's query DTO)
-
-backend/src/asset-history
-├── asset-history.module.ts                # exports AssetHistoryService
-├── asset-history.controller.ts            # admin-only reads
-├── asset-history.service.ts               # reads + internal record* methods
-└── dto/
-    └── list-asset-history-query.dto.ts    # ListAssetHistoryQueryDto (added)
+src
+├── assets/                      # logo, favicon source (acme-hr-logo)
+├── app/
+│   ├── router.tsx               # createBrowserRouter / <Routes> tree
+│   └── providers.tsx            # <Provider store> + <BrowserRouter> wrapper
+├── layouts/
+│   ├── AdminLayout.tsx          # Header + AdminSidebar + <Outlet/>
+│   └── EmployeeLayout.tsx       # Header + EmployeeSidebar + <Outlet/>
+├── pages/
+│   ├── LoginPage.tsx
+│   ├── UnauthorizedPage.tsx
+│   ├── AdminDashboardPage.tsx
+│   ├── EmployeeDashboardPage.tsx
+│   └── PlaceholderPage.tsx      # reused for all not-yet-built routes
+├── components/
+│   ├── layout/                  # Header.tsx, SidebarShell.tsx (shared chrome)
+│   ├── sidebar/
+│   │   ├── AdminSidebar.tsx
+│   │   └── EmployeeSidebar.tsx
+│   └── common/
+│       ├── Loader.tsx
+│       ├── ProtectedRoute.tsx
+│       └── EmptyState.tsx
+├── features/
+│   ├── auth/  { authSlice.ts, authThunks.ts, authSelectors.ts }
+│   ├── employee/    employeeSlice.ts      # empty scaffold slice
+│   ├── department/  departmentSlice.ts    # empty scaffold slice
+│   ├── asset/       assetSlice.ts         # empty scaffold slice
+│   └── asset-request/ assetRequestSlice.ts# empty scaffold slice
+├── services/  { api.ts, endpoints.ts }
+├── store/     { store.ts, hooks.ts }
+├── types/     { auth.types.ts, employee.types.ts, department.types.ts, asset.types.ts, asset-request.types.ts, common.types.ts }
+├── constants/ { roles.ts, routes.ts, nav.ts }
+├── styles/    { variables.module.css / utilities, global tokens }
+├── App.tsx
+└── main.tsx
 ```
 
-> The specs omit list-query DTOs, but the established 005/006/007 pattern validates `page`/`limit`/filters via a dedicated `@Query()` DTO so the controller stays thin and bad input gets a 400 from the global `ValidationPipe`. Add one to each module to match.
-
-## Dependencies / wiring
-
-- `AssetRequestModule` imports `PrismaModule`, `AuthModule`, **and `AssetHistoryModule`** (to inject `AssetHistoryService`). No reverse dependency, so no circular import.
-- `AssetHistoryModule` imports `PrismaModule`, `AuthModule`; **exports `AssetHistoryService`**.
-- `AssetRequestService` injects `PrismaService`, `AuthService`, `AssetHistoryService`.
-- `AssetHistoryService` injects `PrismaService`, `AuthService`.
-- Register both modules in `app/app.module.ts`.
-- Every public service method first calls the existing `AuthService.isUserActive(user)` via the same `assertActiveSession` helper used in 005/006/007; `false` → `UnauthorizedException(AuthMessages.UNAUTHORIZED_EXCEPTION)`.
+> The four non-auth feature slices (`employee`/`department`/`asset`/`asset-request`) are **empty placeholder slices** (initial state + `name` only) registered in the store so 011–014 just fill them in — that's the "feature slice structure" DoD item, not working CRUD state.
 
 ---
 
-## Authorization (confirmed with user)
+## Dependencies to add
 
-Mixed access ⇒ **per-method guards** (mirror `EmployeeController`'s `/me` pattern), not class-level, on the request controller.
-
-| Method | Route                          | Guards                                      | Access            |
-| ------ | ------------------------------ | ------------------------------------------- | ----------------- |
-| POST   | `/asset-requests`              | `JwtAuthGuard`                              | Any authenticated (EMPLOYEE + ADMIN) |
-| GET    | `/asset-requests/my`           | `JwtAuthGuard`                              | Any authenticated — sees only own |
-| GET    | `/asset-requests/my/:id`       | `JwtAuthGuard`                              | Any authenticated — own only |
-| GET    | `/asset-requests`              | `JwtAuthGuard + RolesGuard + @Roles(ADMIN)` | ADMIN — all employees' requests |
-| GET    | `/asset-requests/:id`          | `JwtAuthGuard + RolesGuard + @Roles(ADMIN)` | ADMIN          |
-| PATCH  | `/asset-requests/:id/approve`  | `JwtAuthGuard + RolesGuard + @Roles(ADMIN)` | ADMIN          |
-| PATCH  | `/asset-requests/:id/reject`   | `JwtAuthGuard + RolesGuard + @Roles(ADMIN)` | ADMIN          |
-| GET    | `/asset-history/my`            | `JwtAuthGuard`                              | Any authenticated — sees only own history |
-| GET    | `/asset-history`               | `JwtAuthGuard + RolesGuard + @Roles(ADMIN)` | ADMIN          |
-| GET    | `/asset-history/asset/:assetId`| `JwtAuthGuard + RolesGuard + @Roles(ADMIN)` | ADMIN          |
-| GET    | `/asset-history/employee/:employeeId` | `JwtAuthGuard + RolesGuard + @Roles(ADMIN)` | ADMIN     |
-
-- **Create + `my` routes are NOT `@Roles(EMPLOYEE)`** *(user-confirmed)*: an admin is also a company employee and may raise/view their own requests, so those routes use `JwtAuthGuard` only. The "own only" scoping is enforced in the service (`employee_id = user.id`), not by role. Admins additionally get the admin routes to view/approve/reject *everyone's* requests.
-- `ParseUUIDPipe` on every `:id` / `:assetId` / `:employeeId` param.
-- Route order: declare `my` and `my/:id` **before** `:id` so `my` isn't captured as an id.
-- `AssetHistoryController` is **mixed access** (per-method guards, mirroring `EmployeeController`): `GET /asset-history/my` uses `JwtAuthGuard` only (any authenticated principal, own records only — scoping enforced in the service via `employee_id = user.id`); all other history routes are `JwtAuthGuard + RolesGuard + @Roles(Role.ADMIN)`. Route order: `my` declared before `asset/:assetId` and `employee/:employeeId`.
-
----
-
-## Business rules — Asset Request (008)
-
-**Create** (`POST /asset-requests`, `CreateAssetRequestDto`):
-
-- Fields: `request_type` (`@IsEnum(RequestType)`), `asset_id` (`@IsUUID`), `description` (`@IsString`/`@IsNotEmpty`, `@MaxLength`).
-- Asset must **exist and not be soft-deleted** → else `NotFoundException(ASSET_NOT_FOUND)`.
-- Server-set: `employee_id = req.user.id` (**never** from the body), `status = PENDING`. Persist `request_type`, `asset_id`, `description`.
-- Return `{ message: REQUEST_CREATED_SUCCESSFULLY, data }` (safe projection).
-
-**Get my requests** (`GET /asset-requests/my`): requests where `employee_id = user.id`, `is_deleted: false`; pagination; newest first.
-
-**Get my request detail** (`GET /asset-requests/my/:id`): request must exist, not deleted, **and belong to `user.id`** → else `NotFoundException(REQUEST_NOT_FOUND)` (don't leak others' requests).
-
-**Get all** (`GET /asset-requests`, admin): all non-deleted requests; pagination + `status` filter + `request_type` filter (`ListAssetRequestsQueryDto`); newest first.
-
-**Get detail** (`GET /asset-requests/:id`, admin): any non-deleted request → else `NotFoundException`.
-
-**Approve** (`PATCH /asset-requests/:id/approve`, admin, `ApproveRequestDto { admin_response }`) — **all inside `this.prisma.$transaction(async (tx) => …)`**, following the lifecycle above:
-
-1. Load request (with asset). Must exist, not deleted, `status === PENDING` → else `REQUEST_NOT_FOUND` / `REQUEST_ALREADY_PROCESSED`. Guard `asset_id` is set.
-2. Update request → `status = APPROVED`, `admin_response = dto.admin_response`.
-3. Branch on `request_type`:
-   - **`NEW_ASSET`**: requesting employee must be `status === WORKING` *(business-rules; user-confirmed)* → else `BadRequest(EMPLOYEE_NOT_ALLOCATABLE)`. Asset must be `status === AVAILABLE` **and** `allocated_to_id === null` → else `Conflict/BadRequest(ASSET_NOT_AVAILABLE)`. Update asset → `allocated_to_id = request.employee_id`, `status = ALLOCATED`. Then `assetHistory.recordAllocation(tx, assetId, employee_id, admin_response)`.
-   - **`REMOVE_ASSET`**: asset must currently be `allocated_to_id === request.employee_id` → else `BadRequest(INVALID_ASSET_OWNER)`. Update asset → `allocated_to_id = null`, `status = AVAILABLE`. Then `recordDeallocation(tx, assetId, employee_id, admin_response)`.
-   - **`MAINTENANCE`**: asset must exist (already loaded). Update asset → `status = MAINTENANCE` **and `allocated_to_id = null`** (asset is taken away from the employee once it goes to maintenance). Then `recordMaintenance(tx, assetId, employee_id, admin_response)` (`employee_id` = the requester). History is written here, in the same approval transaction — never outside it.
-4. Update request → `status = COMPLETED` (terminal, read-only).
-5. Return `{ message: REQUEST_APPROVED_SUCCESSFULLY, data }`.
-
-**Reject** (`PATCH /asset-requests/:id/reject`, admin, `RejectRequestDto { admin_response }`): request must exist, not deleted, `PENDING`. Set `status = REJECTED`, store `admin_response` (`@IsString`/`@IsNotEmpty`). No asset mutation, no history. Return `{ message: REQUEST_REJECTED_SUCCESSFULLY, data }`.
-
----
-
-## Business rules — Asset History (009)
-
-**Read APIs** (admin only; each calls `assertActiveSession` first):
-
-- `GET /asset-history` — all records, `orderBy: { created_at: 'desc' }`, pagination, filters: `asset_id`, `employee_id`, `event_type` (`@IsEnum(RequestType)`) via `ListAssetHistoryQueryDto`. `{ data, pagination }`.
-- `GET /asset-history/asset/:assetId` — asset must exist & not soft-deleted → else `ASSET_NOT_FOUND`; full ownership timeline for that asset.
-- `GET /asset-history/employee/:employeeId` — employee must exist & not deleted → else `EMPLOYEE_NOT_FOUND`; all that employee's asset activity.
-
-**Self-service read** (any authenticated principal — own records only; `assertActiveSession` first):
-
-- `GET /asset-history/my` — returns the caller's own asset-activity timeline, scoped in the service to `employee_id = user.id` (never from a route param/body), newest first, `{ data }`. Lets an EMPLOYEE see only their own history; an admin can use it for their own activity or the admin routes for everyone's. *(Added at user request — not in spec 009.)*
-
-- A `HISTORY_SAFE_SELECT` returns `id`, `event_type`, `allocated_at`, `returned_at`, `remarks`, `created_at`, plus `asset` summary (`id`, `asset_serial_number`, `asset_category`, `status`) and `employee` summary (`id`, `first_name`, `last_name`, `official_email`).
-
-**Internal `record*` methods** (called only by `AssetRequestService` inside its approval transaction — **not** session-guarded individually; the calling admin flow already validated the session). Each takes the transaction client as first arg so the write joins the same atomic transaction, and `remarks` is the request's `admin_response`:
-
-```ts
-recordAllocation(tx, assetId, employeeId, remarks)   // event_type = NEW_ASSET,    allocated_at = now()
-recordDeallocation(tx, assetId, employeeId, remarks) // event_type = REMOVE_ASSET, returned_at  = now()
-recordMaintenance(tx, assetId, employeeId, remarks)  // event_type = MAINTENANCE
+```bash
+npm install @reduxjs/toolkit react-redux react-router-dom
 ```
 
-- **`employeeId` and `remarks` are required.** The schema's `employee_id` is NOT NULL and `remarks` is the admin's response; spec 009 wrote `employeeId?` for maintenance, but every approval carries `request.employee_id`, so it's always supplied.
-- **`remarks = admin_response`** (the admin's response on the request) — replacing spec 009's fixed strings, per the lifecycle decision above.
-
-**Immutability:** no `POST` / `PATCH` / `DELETE` on `/asset-history`; records are only ever created by the system via `record*`.
-
----
-
-## DTO validation
-
-- `CreateAssetRequestDto`: `request_type` `@IsEnum(RequestType)`; `asset_id` `@IsUUID()`; `description` `@IsString()` `@IsNotEmpty()` `@MaxLength(ASSET_REQUEST_DESCRIPTION_MAX_LENGTH)`.
-- `ApproveRequestDto`: `admin_response` `@IsString()` `@IsNotEmpty()` `@MaxLength(ADMIN_RESPONSE_MAX_LENGTH)`.
-- `RejectRequestDto`: `admin_response` `@IsString()` `@IsNotEmpty()` `@MaxLength(ADMIN_RESPONSE_MAX_LENGTH)`. (Same shape as approve; kept as a separate DTO for clarity/future divergence.)
-- `ListAssetRequestsQueryDto`: optional `page`/`limit` (`@Type(() => Number) @IsInt() @Min(1)`), optional `status` `@IsEnum(RequestStatus)`, optional `request_type` `@IsEnum(RequestType)`.
-- `ListAssetHistoryQueryDto`: optional `page`/`limit`, optional `asset_id` `@IsUUID()`, optional `employee_id` `@IsUUID()`, optional `event_type` `@IsEnum(RequestType)`.
-- System-managed fields kept out of DTOs; global `ValidationPipe({ whitelist: true })` strips unknown props.
-
-## Messages & constants
-
-Add to the existing singular `backend/src/constant/messages.constant.ts`:
-
-```ts
-export const AssetRequestMessages = {
-  REQUEST_NOT_FOUND: 'Asset request not found',
-  REQUEST_CREATED_SUCCESSFULLY: 'Asset request created successfully',
-  REQUEST_APPROVED_SUCCESSFULLY: 'Asset request approved successfully',
-  REQUEST_REJECTED_SUCCESSFULLY: 'Asset request rejected successfully',
-  REQUEST_ALREADY_PROCESSED: 'Request has already been processed',
-  ASSET_NOT_AVAILABLE: 'Asset is not available for allocation',
-  INVALID_ASSET_OWNER: 'Asset is not allocated to the employee',
-  EMPLOYEE_NOT_ALLOCATABLE: 'Asset cannot be allocated to a non-working employee',
-} as const;
-
-export const AssetHistoryMessages = {
-  HISTORY_NOT_FOUND: 'Asset history not found',
-  ASSET_NOT_FOUND: 'Asset not found',
-  EMPLOYEE_NOT_FOUND: 'Employee not found',
-} as const;
-```
-
-Add to `values.constant.ts`: `ASSET_REQUEST_LIST_DEFAULT_LIMIT` / `_MAX_LIMIT`, `ASSET_HISTORY_LIST_DEFAULT_LIMIT` / `_MAX_LIMIT`, `ASSET_REQUEST_DESCRIPTION_MAX_LENGTH`, `ADMIN_RESPONSE_MAX_LENGTH` (mirror existing list/length constants). No hardcoded strings at throw sites. (No fixed-remark constants — remarks come from `admin_response`.)
+- `react-router-dom` is **required** for routing but not in the spec's install line — flagged.
+- **Forms**: `ui-guidelines.md` says "Use React Hook Form". For 010 the only form is Login (2 fields). **Decision to confirm at implementation:** use `react-hook-form` for the login form (consistent with the guideline and future CRUD forms) — or plain controlled `useState` to avoid a dependency until the first real CRUD form. Default lean: **react-hook-form** (install `react-hook-form`) so the pattern is set early. *(Minor — will confirm before adding.)*
+- No UI-component library; **CSS Modules** only (spec mandate). Establish design tokens (colors, spacing, radius — dark sidebar `#0b1220`-ish, light content, blue accent `#2563eb`, pill status badges) as CSS custom properties in `styles/`.
 
 ---
 
-## Discrepancies / decisions flagged (all confirmed with user)
+## Redux Toolkit setup
 
-1. **`event_type` field** — reuse the existing `RequestType` enum (sourced from the triggering request) instead of inventing a `HistoryEventType`; one additive migration adds `event_type RequestType` + index to `AssetAllocationHistory`. All three request types map directly; none left over. **Only schema change in this feature.**
-2. **Create + `my` routes allow ADMIN too** — guarded with `JwtAuthGuard` only, not `@Roles(EMPLOYEE)`, because an admin is also an employee. "Own only" is enforced in the service; admins use the separate admin routes to see everyone's requests. *(Amends spec 008's Security wording.)*
-3. **Approval is terminal `COMPLETED`, and `admin_response` is required on approve** — lifecycle `PENDING → APPROVED → (history written) → COMPLETED`; the approve endpoint takes `ApproveRequestDto { admin_response }` (the `approve-request.dto.ts` already listed in spec 008's structure). *(Reconciles spec 008's `APPROVED`-only with business-rules.md's `COMPLETED` lifecycle.)*
-4. **History `remarks = admin_response`** — replaces spec 009's fixed remark strings, so each history record carries the admin's actual response.
-5. **`recordMaintenance` employeeId required** — schema `employee_id` is NOT NULL; spec wrote it optional (`employeeId?`). **Decision (user — Option 1):** keep it **required** for all three `record*` methods and always pass `request.employee_id` (the employee who **raised** the request). For maintenance this means `employee_id` records the **requester**. Always available because `AssetRequest.employee_id` is NOT NULL and server-set to `req.user.id`. No schema change, no nullable column — keeps the single-additive-migration design. **Asset effect (user-confirmed):** approving a `MAINTENANCE` request sets the asset `status = MAINTENANCE` **and clears `allocated_to_id = null`** — the asset is no longer with the employee once it goes to maintenance; the matching history row is written in the same transaction.
-6. **Employee-must-be-`WORKING` on `NEW_ASSET` approval** — enforced from business-rules.md (Asset Allocation Rules), though spec 008 doesn't restate it.
-7. **`record*` methods are not individually session-guarded** — internal, invoked only inside the admin approval transaction that already validated the session.
-8. **Messages path** — singular `src/constant/` (as in 003–007), not the specs' plural `src/constants/`.
-9. **List-query DTOs added** — not in the specs, but consistent with 005/006/007 (thin controller, 400 on bad input).
-10. **Employee self-service history route added** *(user-requested)* — `GET /asset-history/my` lets any authenticated principal (incl. EMPLOYEE role) view **only their own** history (`employee_id = user.id`, scoped in the service). This makes `AssetHistoryController` mixed-access (per-method guards) rather than the spec's uniform class-level admin guard. Not in spec 009.
+- **`store/store.ts`**: `configureStore({ reducer: { auth, employee, department, asset, assetRequest } })`; **must export** `export type RootState = ReturnType<typeof store.getState>` and `export type AppDispatch = typeof store.dispatch` (spec-mandated).
+- **`store/hooks.ts`**: `export const useAppDispatch = () => useDispatch<AppDispatch>()` and `export const useAppSelector: TypedUseSelectorHook<RootState> = useSelector` (spec-mandated). Components/services use these typed hooks only.
+
+### Auth feature (`features/auth`)
+
+- **State** (`AuthState`): `{ user: AuthUser | null, isAuthenticated: boolean, loading: boolean, error: string | null, initializing: boolean }`. Spec's minimal `{ loading, error, isAuthenticated }` is extended with `user` (needed for role/redirect/header) and `initializing` (true during the boot `fetchCurrentUser`, so we don't flash the login page before the cookie check resolves).
+- **`authThunks.ts`** — `createAsyncThunk`:
+  - `login({ email, password })` → `api.post('/auth/login')` then `api.get('/employees/me')`; returns the `/me` user. Fulfilled → set user + `isAuthenticated`. Rejected → store the friendly error message.
+  - `fetchCurrentUser()` → `api.get('/employees/me')`; used on app boot. Rejected (401) → stays unauthenticated.
+  - `logout()` → `api.post('/auth/logout')`; always clears state even if the call errors.
+- **`authSlice.ts`** — `extraReducers` for the three thunks (loading/error/`initializing`/user/`isAuthenticated`); a sync `clearAuth` for the central 401 handler.
+- **`authSelectors.ts`** — `selectAuth`, `selectIsAuthenticated`, `selectCurrentUser`, `selectUserRole`, `selectAuthLoading`, `selectAuthError`.
 
 ---
 
-## Definition of Done
+## API service layer (`services/api.ts` + `endpoints.ts`)
 
-### Asset Request (008)
-- [ ] Create / Get My / Get My Detail implemented (any authenticated; own-only scoping).
-- [ ] Get All (filters + pagination) / Get Detail implemented (admin).
-- [ ] Approve (transactional, `admin_response`, → `COMPLETED`) + Reject (`admin_response`, → `REJECTED`) implemented (admin).
-- [ ] `NEW_ASSET`, `REMOVE_ASSET`, `MAINTENANCE` approval flows implemented with correct asset mutations + validations (incl. WORKING check on NEW_ASSET).
+Centralized `fetch` wrapper (spec: base URL, JSON parsing, error handling — **but credentials, not Authorization header**, per the cookie reality):
 
-### Asset History (009)
-- [ ] Get All / Get Asset History / Get Employee Asset History implemented (admin).
-- [ ] `recordAllocation` / `recordDeallocation` / `recordMaintenance` implemented (tx-aware, `remarks = admin_response`), called from approval.
-- [ ] Records immutable — no create/update/delete API.
+- Base URL from `import.meta.env.VITE_API_URL`.
+- Every request: `credentials: 'include'`, `Content-Type: application/json`, `JSON.stringify` body.
+- Parse JSON; on non-2xx throw a normalized error carrying the backend message. The backend's `ValidationPipe` returns **field-keyed** 400 bodies (e.g. `{ email: "...", password: "..." }`) and string messages for other errors — normalize both so the login form can show field or general errors.
+- **Central 401 handling**: on `401`, dispatch `clearAuth` (or signal the store) so the app drops to `/login` — wired via a small injected dispatch or an event, avoiding a circular import with the store.
+- `get/post/patch/del` helpers. `endpoints.ts` holds route constants: `AUTH.LOGIN`/`REFRESH`/`LOGOUT`, `EMPLOYEES.ME`, etc., so no hardcoded URL strings.
 
-### Cross-cutting
-- [ ] `event_type RequestType` + index added; migration `add_history_event_type` applied; client regenerated; `context/prisma-schema.md` updated.
-- [ ] JWT auth + RBAC + `AuthService.isUserActive` session guard wired; route order (`my` before `:id`) correct.
-- [ ] Approval runs in a single Prisma transaction (asset mutation + request status + history record atomic).
-- [ ] No hardcoded messages (`AssetRequestMessages` / `AssetHistoryMessages`); safe `select` projections hide internal fields.
-- [ ] `npm run build` passes; `npm run lint` passes; manual API testing (each request type, approve→COMPLETED/reject, ownership checks, WORKING check, immutability, RBAC, history filters, remarks = admin_response).
+---
+
+## Routing & route protection
+
+- **`app/router.tsx`** route tree:
+  - **Public**: `/login` → `LoginPage`; `/unauthorized` → `UnauthorizedPage`.
+  - **Admin** (wrapped in `ProtectedRoute allow={Role.ADMIN}` → `AdminLayout`): `/dashboard` (`AdminDashboardPage`), placeholders for `/employees`, `/departments`, `/hierarchy`, `/assets`, `/asset-requests`, plus the admin's Employee-Portal items `/my-assets`, `/my-requests`, `/profile`.
+  - **Employee** (wrapped in `ProtectedRoute allow={Role.EMPLOYEE}` → `EmployeeLayout`): `/dashboard` (`EmployeeDashboardPage`), placeholders for `/my-assets`, `/my-requests`, `/profile`.
+  - `/` → redirect to `/dashboard` (which resolves per role); unknown → `/login` or a 404.
+- **`ProtectedRoute.tsx`**: while `initializing` → `<Loader/>`; if not `isAuthenticated` → `<Navigate to="/login" replace/>`; if `allow` role doesn't match `user.role` → `<Navigate to="/unauthorized" replace/>`; else render children/`<Outlet/>`.
+- **Role enum** mirrored on the frontend in `constants/roles.ts` (`ADMIN` / `EMPLOYEE`) to match the backend `Role`. Redirect-after-login: `ADMIN` → admin `/dashboard`, `EMPLOYEE` → employee `/dashboard` (same path, role decides which layout/dashboard renders).
+
+---
+
+## Pages & layouts
+
+- **`LoginPage`** — centered auth card. Header **"Login User"**, subheading **"EMS"**, fields Email + Password, **Login** button. On submit: validate (required + email format) → dispatch `login` → show loading on the button → on reject show the API error (field-keyed or general) → on fulfill redirect by role. CSS Module, responsive, centered.
+- **`AdminLayout` / `EmployeeLayout`** — shared `Header` (collapse toggle, search input [non-functional placeholder in 010], bell, avatar) + respective sidebar + scrollable `<main>` content area (`<Outlet/>`). Sidebar chrome shared via `components/layout/SidebarShell` for reuse (spec: "Sidebar Layout Reusability").
+- **`AdminDashboardPage`** — match `dashboard_ui.png`: title "Admin Dashboard" + subtitle, 4 stat cards (Total Employees, Working Employees, Assets Allocated, Pending Requests) with **placeholder numbers**, plus "Recent Requests" and "Recently Added" panels (static placeholder rows, status pill badges). Real data is Feature 015.
+- **`EmployeeDashboardPage`** — match `employee_my_dashboard_ui.png`: "My Dashboard" + welcome line, 3 cards (My Assets, Open Requests, Recent Activity), "My Assets" + "Recent Activity" panels — placeholder data.
+- **`UnauthorizedPage`** — simple 403 message + link back to `/dashboard`/`/login`.
+- **`PlaceholderPage` / `EmptyState`** — generic "This module is coming soon" used by every not-yet-built menu target so navigation works end-to-end.
+
+---
+
+## Styling standards
+
+- **CSS Modules** for every component (`*.module.css`). Global tokens/utilities + favicon in `styles/` and `assets/`.
+- Design system from screenshots: dark sidebar, light content, blue primary accent, rounded cards with subtle border/shadow, status **pill badges** (color per Employee/Asset/Request status from `ui-guidelines.md`). Responsive: fixed sidebar on desktop, drawer on mobile (toggle already in header).
+- **Favicon** configured from `src/assets` (use `acme-hr-logo.png` / existing `logo.png`) via `index.html`.
+
+---
+
+## Discrepancies / decisions (✓ = user-confirmed)
+
+1. **✓ Cookie-based auth, not bearer token** — backend sets httpOnly cookies and login returns no role/user. Frontend uses `credentials:'include'`, no `Authorization` header, no `localStorage` token; role + session come from `GET /employees/me`; rehydrate on boot via `/me`. Overrides spec's "JWT token persistence" / "Authorization header injection".
+2. **✓ Navigation follows the screenshots** — Admin sidebar has both **Administration** (Dashboard, Employees, Departments, **Hierarchy**, Assets, Requests) and **Employee Portal** (My Dashboard, My Assets, My Requests) sections; item is **"Hierarchy"** not the spec text's "History". Employee sidebar = Employee Portal only.
+3. **`react-router-dom` required** — not in the spec's install line; needed for routing.
+4. **Login = two API calls** — `/auth/login` then `/employees/me`, because login's body carries no role.
+5. **Auth state extended** — added `user` and `initializing` to the spec's minimal `{ loading, error, isAuthenticated }` (needed for role redirect, header identity, and avoiding a login-page flash during the boot `/me` check).
+6. **`constants/` (plural)** on the frontend — matches the spec's frontend tree (distinct from the backend's singular `constant/`).
+7. **Placeholder feature slices** — `employee`/`department`/`asset`/`asset-request` slices are empty scaffolds registered in the store; real state lands in 011–014.
+8. **Form library (to confirm at impl)** — `react-hook-form` per `ui-guidelines.md` vs plain `useState` for the single login form; default lean RHF.
+
+---
+
+## Definition of Done (from spec)
+
+**Authentication**
+- [ ] Login page implemented (card, "Login User"/"EMS", email/password, validation, loading, API errors).
+- [ ] Login API integration against real `POST /api/auth/login` (no mock) + `GET /employees/me` for role.
+- [ ] Auth state management (slice + thunks + selectors); session rehydrated on boot via `/me` (the cookie-based equivalent of "token persistence").
+- [ ] Logout clears state + calls `/auth/logout`.
+
+**Redux**
+- [ ] Redux Toolkit configured; `store.ts` exports `RootState` + `AppDispatch`; typed `useAppDispatch`/`useAppSelector` hooks.
+
+**Routing**
+- [ ] Public, admin, employee, and unauthorized routes; `ProtectedRoute` enforces auth + role; role-based redirect after login.
+
+**Layouts**
+- [ ] Admin + Employee layouts; Admin/Employee sidebars per screenshots; header; reusable sidebar chrome.
+
+**Shared infrastructure**
+- [ ] `api.ts` (credentials, base URL, JSON, error + central 401) + `endpoints.ts`; global types; placeholder feature-slice structure; constants; favicon.
+
+**Verification**
+- [ ] Login works against the running backend; role-based redirects work; protected/unauthorized routes work; sidebar navigation works (placeholders render); `npm run build` passes; `npm run lint` passes.
 
 ---
 
 ## Notes / decisions
 
-- Schema is the source of truth — the only addition is `event_type` (reusing `RequestType`), explicitly approved. Everything else uses existing `AssetRequest` / `AssetAllocationHistory` / `Asset` fields.
-- Reuses the auth module (003/004): `JwtAuthGuard`, `RolesGuard`, `@Roles`, exported `AuthService.isUserActive`.
-- Mirrors 005/006/007 patterns: `assertActiveSession` helper, single safe `select` per module, `{ data, pagination }` list shape, `{ message, data }` mutation shape, `ParseUUIDPipe`, `RequestType`/`RequestStatus` from `src/generated/prisma/client`.
-- Integration is the reason for co-implementation: approval and history-write share one transaction, so 008 depends on 009's tx-aware `record*` methods.
-- Branch: `feature/asset-request-asset-history` (per development-rules git naming).
+- Backend is the source of truth for the auth contract — frontend adapts to httpOnly cookies; no backend changes needed (CORS + credentials already configured for `:5173`).
+- Mirrors backend module discipline on the frontend: feature-based folders, API calls only in `services/`, no direct `fetch` in components, typed Redux hooks, strict TypeScript (no `any`), reusable components.
+- 010 deliberately ships placeholders for all CRUD routes/menus so 011–015 are pure feature work with no architectural refactor.
+- Branch `feature/frontend-foundation` off `main` (development-rules git naming).
 
 ## History
 
@@ -305,3 +251,7 @@ Add to `values.constant.ts`: `ASSET_REQUEST_LIST_DEFAULT_LIMIT` / `_MAX_LIMIT`, 
 - 2026-06-12 — **Implemented (008 + 009).** Schema: added `event_type RequestType` + `@@index([event_type])` to `AssetAllocationHistory` in `schema.prisma` and mirrored it in `context/prisma-schema.md`; generated & applied migration `20260612101015_add_history_event_type` (additive `ALTER TABLE ADD COLUMN ... NOT NULL` — safe, table was empty); ran `prisma generate` (the `migrate dev` run did not refresh the client, so the first build failed on the missing `event_type` type until a manual regenerate). **Constants:** added `AssetRequestMessages` (incl. its own `ASSET_NOT_FOUND`) + `AssetHistoryMessages` to `src/constant/messages.constant.ts`, and `ASSET_REQUEST_LIST_DEFAULT/MAX_LIMIT`, `ASSET_REQUEST_DESCRIPTION_MAX_LENGTH`, `ADMIN_RESPONSE_MAX_LENGTH`, `ASSET_HISTORY_LIST_DEFAULT/MAX_LIMIT` to `values.constant.ts`. **`src/asset-history/`** (009): `AssetHistoryService` with a single `HISTORY_SAFE_SELECT` (id, event_type, allocated_at, returned_at, remarks, created_at + asset & employee summaries), admin reads (`findAll` paginated w/ asset_id/employee_id/event_type filters; `findByAsset`/`findByEmployee` full newest-first timelines with existence guards), **and a `findMyHistory` self-service read** scoped to `employee_id = user.id`; tx-aware `recordAllocation`/`recordDeallocation`/`recordMaintenance` writers (first arg `Prisma.TransactionClient`, `remarks = admin_response`). Controller is **mixed-access per-method guards**: `GET /asset-history/my` (`JwtAuthGuard`) before the admin routes (`GET /`, `/asset/:assetId`, `/employee/:employeeId`). Module exports the service. **`src/asset-request/`** (008): 4 DTOs (`CreateAssetRequestDto` request_type/asset_id/description; `ApproveRequestDto`/`RejectRequestDto` admin_response; `ListAssetRequestsQueryDto` page/limit/status/request_type); `AssetRequestService` with `REQUEST_SAFE_SELECT`, create (asset-exists guard, `employee_id = user.id`, PENDING), `findMy`/`findMyOne` (own-only), admin `findAll`/`findOne`, and the **approval `$transaction`** (load PENDING request → mark APPROVED+admin_response → branch: NEW_ASSET [employee WORKING + asset AVAILABLE/unallocated → allocate + recordAllocation], REMOVE_ASSET [owner check → deallocate + recordDeallocation], MAINTENANCE [status=MAINTENANCE + allocated_to_id=null + recordMaintenance] → COMPLETED) + `reject` (PENDING→REJECTED, no asset/history). Controller mixed-access per-method guards, `my`/`my/:id` before `:id`. Module imports `AssetHistoryModule` to inject the service. Registered both in `app/app.module.ts`. **One scope addition during implementation (user-requested):** the employee `GET /asset-history/my` self-service route (decision #10). `npm run build` and `npm run lint` pass. **Manual API verification still pending.** Status: Implemented; ready for manual verification.
 
 - 2026-06-12 — **Manual API verification (008 + 009) — all scenarios pass.** Ran the dev server (killed a stale port-3000 listener first — the recurring EADDRINUSE gotcha; `migrate dev` had also left the generated client un-refreshed, so an explicit `prisma generate` was needed before the build went green). Tested against a running server with admin (`hr.admin@company.com`, WORKING, EMP001) + a freshly-provisioned test EMPLOYEE (EMP013). **Verified:** NEW_ASSET create→my/my:id→admin-list→approve→`COMPLETED` with asset `ALLOCATED` to requester + allocation history (`event_type=NEW_ASSET`, `remarks=admin_response`); REMOVE_ASSET approve→asset `AVAILABLE`/owner cleared + deallocation history; **MAINTENANCE approve→asset `status=MAINTENANCE` AND `allocated_to_id=null` + maintenance history recorded against the requester** (the confirmed Option-1 behavior); reject→`REJECTED`, no history, asset untouched. **Guards/edge cases:** double-approve→400 `REQUEST_ALREADY_PROCESSED`; REMOVE on non-owned asset→400 `INVALID_ASSET_OWNER` **with full transaction rollback** (request stayed `PENDING`, asset unchanged — confirms atomicity); NEW_ASSET on a MAINTENANCE asset→409 `ASSET_NOT_AVAILABLE`; **WORKING check** (set requester `ON_NOTICE`, approve)→400 `EMPLOYEE_NOT_ALLOCATABLE`; non-existent asset→404 `ASSET_NOT_FOUND`; invalid `request_type`/empty `admin_response`/bad UUID→400; approve non-existent→404. **Auth/RBAC:** unauthenticated→401; EMPLOYEE→admin routes (list/history/approve)→403; EMPLOYEE create + `/asset-requests/my` + `/asset-history/my`→200/201; own-only scoping (employee fetching admin's request via `/my/:id`)→404. **History reads:** `GET /asset-history` + `event_type` filter, `/asset/:assetId` timeline, `/employee/:employeeId`, `/my` self-service all correct. **Immutability:** `POST`/`PATCH`/`DELETE /asset-history`→404 (no such routes). **Cleanup:** a throwaway `tsx` script hard-deleted all test asset_requests + asset_allocation_history rows, reset SCR-2023-0002 back to AVAILABLE, and removed the test employee — DB verified back to the original seed (history 0, requests 0, 0 allocated, 4 MAINTENANCE, 12 employees); script deleted afterward. Status: **Completed & verified.**
+
+- 2026-06-12 — **Started feature 010 (Frontend Foundation, Authentication & Application Layout) — first frontend feature.** Read spec `specs/010-frontend-foundation.md` and all referenced frontend context (`frontend-routes.md`, `ui-guidelines.md`, `development-rules.md`, `api-contracts.md`, `env-context.md`), the live backend auth contract (`auth.controller.ts`/`auth.service.ts` — login sets httpOnly cookies & returns only `{success, message}`; `main.ts` CORS `credentials:true` for `:5173`; `EMPLOYEE_SAFE_SELECT` includes `role`), the current bare `frontend/` (Vite + React 19, no router/redux yet), and the design screenshots (`dashboard_ui`, `employee_my_dashboard_ui`, `admin_sidebar_ui`, `employee_sidebar_ui`). Rewrote current-feature.md with the 010 plan: full `src/` architecture (app/router+providers, layouts, pages, components/sidebar+common, feature slices, services/api+endpoints, store, types, constants, styles), Redux Toolkit store/typed-hooks, the auth slice/thunks/selectors, `credentials:'include'` fetch wrapper with central 401 handling, `ProtectedRoute` (auth + role), Admin/Employee layouts + sidebars, login page, dashboard shells, CSS-Modules design system, favicon. **Three decisions confirmed with the user before finalizing:** (1) **cookie-based auth** — frontend uses `credentials:'include'`, no Authorization header / no localStorage token; login is two-step (`/auth/login` → `GET /employees/me` for role) and session rehydrates on boot via `/me` (overrides spec's "JWT token persistence"/"Authorization header injection"); (2) **navigation follows the screenshots** — admin sidebar has both Administration (Dashboard, Employees, Departments, **Hierarchy**, Assets, Requests) and Employee Portal (My Dashboard, My Assets, My Requests) sections, item is "Hierarchy" not the spec text's "History"; (3) **plan-only — no code written yet, pending review.** Other flags: `react-router-dom` required (not in spec's install line); auth state extended with `user` + `initializing`; frontend `constants/` is plural (spec's tree); 4 empty placeholder feature slices for 011–014; form-library choice (react-hook-form vs useState) deferred to implementation. Status: **Planned, ready to implement (pending review).**
+
+- 2026-06-12 — **Implemented & verified (010 — Frontend Foundation).** Branched `feature/frontend-foundation` off main. Installed `@reduxjs/toolkit`, `react-redux`, `react-router-dom`, and `react-hook-form` (form-library decision: RHF for the login form, per `ui-guidelines.md`, to set the pattern early). Built the full `src/` architecture per the plan: **constants** (`roles.ts` Role mirror, `routes.ts` path map, `nav.ts` admin/employee nav-section model with JSX-free icon keys); **types** mirroring the backend safe-selects (`employee.types.ts` with the `EMPLOYEE_SAFE_SELECT` shape + `EmployeeStatus`; `AuthUser = Employee` per user instruction — `/me` returns exactly the safe employee; `asset`/`department`/`asset-request`/`common` types incl. enum mirrors + `ApiError`/`PaginatedResponse`); **services** (`endpoints.ts` route constants; `api.ts` — `credentials:'include'` fetch wrapper, no Authorization header, JSON parse, `normalizeError` handling **both** Nest `{message}` bodies and field-keyed `ValidationPipe` 400 bodies, central 401 handler injected via `setUnauthorizedHandler` to avoid a store↔api circular import, `skipAuthRedirect` for the login/boot calls); **store** (`store.ts` with `RootState`/`AppDispatch` exports + 401→`clearAuth` wiring; `hooks.ts` typed `useAppDispatch`/`useAppSelector`); **auth feature** (`authThunks` two-step `login` = `/auth/login`→`/employees/me`, boot `fetchCurrentUser`, `logout`; `authSlice` with `user`/`isAuthenticated`/`loading`/`initializing`/`error` + sync `clearAuth`/`clearError`; `authSelectors`); **4 empty placeholder slices** (employee/department/asset/assetRequest) registered in the store; **common components** (`Loader`, `EmptyState`, `StatusBadge` mapping every Employee/Asset/Request status to a pill tone, `Icon` inline-SVG set [no icon-lib dep], `ProtectedRoute` auth+role guard, `PageHeader`); **layout chrome** (`SidebarShell` shared brand+nav+footer with desktop-fixed/mobile-drawer; `Header` with collapse toggle, disabled search placeholder, bell, avatar menu with logout); **sidebars** (`AdminSidebar` Administration+Employee Portal, `EmployeeSidebar` Employee Portal only — per screenshots); **layouts** (`AdminLayout`/`EmployeeLayout` sharing `layout.module.css`); **pages** (`LoginPage` "Login User"/"EMS" RHF card, `AdminDashboardPage` + `EmployeeDashboardPage` matching the screenshots with placeholder data via `StatCard`/`Panel`, `UnauthorizedPage` 403, `PlaceholderPage` for every not-yet-built route); **routing** (`router.tsx`: public `/login`+`/unauthorized`; `RequireAuth` auth-only gate → `RoleLayout` picks Admin/Employee layout by role → shared portal routes `/dashboard` [resolves to role dashboard via `DashboardByRole`], `/my-assets`, `/my-requests`, `/profile`, plus an admin-only `ProtectedRoute allow=ADMIN` group for `/employees`,`/departments`,`/hierarchy`,`/assets`,`/asset-requests`; `*`→`/dashboard`. **Design note:** because both roles share `/dashboard` (and `/my-*`), a single role-switching layout avoids the two-routes-same-path collision rather than two parallel role subtrees); **providers** (`Provider`+`BrowserRouter`); `App.tsx` dispatches boot `fetchCurrentUser`; `main.tsx` imports `styles/tokens.css`+`global.css` (design tokens: dark sidebar, light content, blue accent, pill badges). **Branding:** user changed the brand to **"Acme HR Suite"** (logo is icon-only cubes; copied `screenshots/acme-hr-logo.png` → `src/assets/`, set as favicon via `index.html`). Removed the Vite boilerplate `App.css`/`index.css`. **Backend contract verified live** (server already running on :3000): admin login (`hr.admin@company.com`/`Admin@123`) → 200 + httpOnly `access_token`/`refresh_token` cookies + CORS `Access-Control-Allow-Origin: http://localhost:5173` & `-Allow-Credentials: true` + body `{success,message}` (no role); `GET /employees/me` w/ cookie → full safe employee (role ADMIN, status WORKING, department summary) **matching the `AuthUser` type field-for-field**; bad creds → 401; bad email/empty password → 400 field-keyed `{email,password}` (both handled by `normalizeError`). `npm run build` + `npm run lint` pass clean; Vite dev server boots and serves HTTP 200. **Not done in 010 (out of scope):** browser-driven E2E click-through (login→redirect→nav) — contract + build/lint/serve verified instead; CRUD screens/dashboard data are Features 011–015. Status: **Completed & verified.**

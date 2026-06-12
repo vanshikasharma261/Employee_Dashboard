@@ -1,0 +1,25 @@
+/** Shared layout shell styles for Admin + Employee layouts. */
+.layout {
+  display: flex;
+  min-height: 100vh;
+  background-color: var(--color-bg);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.main {
+  flex: 1;
+  padding: var(--space-6);
+  overflow-y: auto;
+}
+
+@media (max-width: 600px) {
+  .main {
+    padding: var(--space-4);
+  }
+}
