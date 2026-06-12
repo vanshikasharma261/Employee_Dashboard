@@ -53,11 +53,23 @@ async function seedDepartments(): Promise<Map<string, string>> {
   const departmentIdByName = new Map<string, string>();
 
   for (const department of departmentsSeedData) {
-    const record = await prisma.department.upsert({
-      where: { name: department.name },
-      update: {},
-      create: { name: department.name },
+    // `name` is no longer a Prisma-unique field (uniqueness is a partial,
+    // case-insensitive expression index), so upsert-by-name is unavailable.
+    // Find an existing active match first, then create — keeps the seed
+    // idempotent without depending on a schema-level unique constraint.
+    const existing = await prisma.department.findFirst({
+      where: {
+        name: { equals: department.name, mode: 'insensitive' },
+        is_deleted: false,
+      },
+      select: { id: true },
     });
+    const record =
+      existing ??
+      (await prisma.department.create({
+        data: { name: department.name },
+        select: { id: true },
+      }));
     departmentIdByName.set(department.name, record.id);
   }
 
