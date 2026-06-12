@@ -1,0 +1,71 @@
+/**
+ * Global design tokens (CSS custom properties) derived from the design
+ * screenshots: dark sidebar, light content, blue primary accent, rounded
+ * cards, pill status badges. Imported once in main.tsx; available everywhere
+ * including CSS Modules via var(--token).
+ */
+:root {
+  /* Brand / accent */
+  --color-primary: #2563eb;
+  --color-primary-hover: #1d4ed8;
+  --color-primary-soft: #eff6ff;
+
+  /* Sidebar (dark) */
+  --color-sidebar-bg: #0b1220;
+  --color-sidebar-surface: #111a2e;
+  --color-sidebar-active: #1e293b;
+  --color-sidebar-border: #1e2a44;
+  --color-sidebar-text: #cbd5e1;
+  --color-sidebar-text-muted: #64748b;
+  --color-sidebar-text-active: #ffffff;
+
+  /* Content (light) */
+  --color-bg: #f8fafc;
+  --color-surface: #ffffff;
+  --color-border: #e2e8f0;
+  --color-border-strong: #cbd5e1;
+
+  /* Text */
+  --color-text: #0f172a;
+  --color-text-muted: #64748b;
+  --color-text-subtle: #94a3b8;
+
+  /* Status palette (background / foreground) */
+  --status-green-bg: #dcfce7;
+  --status-green-fg: #15803d;
+  --status-amber-bg: #fef3c7;
+  --status-amber-fg: #b45309;
+  --status-blue-bg: #dbeafe;
+  --status-blue-fg: #1d4ed8;
+  --status-red-bg: #fee2e2;
+  --status-red-fg: #b91c1c;
+  --status-gray-bg: #f1f5f9;
+  --status-gray-fg: #475569;
+
+  /* Spacing scale */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-8: 3rem;
+
+  /* Radius */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-full: 999px;
+
+  /* Shadow */
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.08);
+
+  /* Layout metrics */
+  --sidebar-width: 256px;
+  --header-height: 64px;
+
+  /* Typography */
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+}
