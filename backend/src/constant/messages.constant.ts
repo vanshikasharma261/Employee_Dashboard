@@ -38,3 +38,16 @@ export const DepartmentMessages = {
   DEPARTMENT_HAS_EMPLOYEES:
     'Department cannot be deleted while employees are assigned',
 } as const;
+
+/** Asset-management messages (feature 007). */
+export const AssetMessages = {
+  ASSET_NOT_FOUND: 'Asset not found',
+  ASSET_ALREADY_EXISTS: 'Asset already exists',
+  ASSET_CREATED_SUCCESSFULLY: 'Asset created successfully',
+  ASSET_UPDATED_SUCCESSFULLY: 'Asset updated successfully',
+  ASSET_STATUS_UPDATED_SUCCESSFULLY: 'Asset status updated successfully',
+  ASSET_DELETED_SUCCESSFULLY: 'Asset deleted successfully',
+  ASSET_ALREADY_DELETED: 'Asset is already deleted',
+  ASSET_CANNOT_BE_DELETED: 'Allocated asset cannot be deleted',
+  INVALID_ASSET_STATUS: 'Invalid asset status transition',
+} as const;
