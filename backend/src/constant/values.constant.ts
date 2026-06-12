@@ -38,6 +38,18 @@ export const DEPARTMENT_SEARCH_MAX_LENGTH = 100;
 /** Upper bound on a department name. */
 export const DEPARTMENT_NAME_MAX_LENGTH = 255;
 
+/** Default page size for paginated asset listings. */
+export const ASSET_LIST_DEFAULT_LIMIT = 10;
+
+/** Upper bound on a single page of assets, to cap query cost. */
+export const ASSET_LIST_MAX_LIMIT = 100;
+
+/** Upper bound on a free-text asset search term, to cap query cost. */
+export const ASSET_SEARCH_MAX_LENGTH = 100;
+
+/** Upper bound on an asset serial number. */
+export const ASSET_SERIAL_NUMBER_MAX_LENGTH = 255;
+
 /** Employee statuses permitted to authenticate (business rule). */
 export const LOGIN_ALLOWED_STATUSES: EmployeeStatus[] = [
   EmployeeStatus.WORKING,

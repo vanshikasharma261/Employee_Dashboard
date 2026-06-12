@@ -1,18 +1,20 @@
 ## Current Feature
 
-**006 — Department Management Module**
+**007 — Asset Management Module**
 
-Implement the Department Management backend APIs: full CRUD for administrators (list, create, update, soft delete) over the `Department` model. Follows the established architecture (Controller → Service → PrismaService → PostgreSQL) with all business logic confined to the service layer, mirroring the Employee module (feature 005). Backend-only; **no schema changes** (the `Department` model already exists with every field this feature needs).
+Implement the Asset Management backend APIs: full CRUD for administrators (list, get-by-id, create, update, update-status, soft delete) over the `Asset` model. This module is the source of truth for company-owned assets and maintains asset inventory + lifecycle status. Follows the established architecture (Controller → Service → PrismaService → PostgreSQL) with all business logic confined to the service layer, mirroring the Employee (005) and Department (006) modules. Backend-only; **no schema changes** (the `Asset` model already exists with every field this feature needs).
 
-Spec: [specs/006-department-crud-apis.md](../specs/006-department-crud-apis.md)
+Spec: [specs/007-assets-crud-apis.md](../specs/007-assets-crud-apis.md)
+
+Branch: `feature/assets-crud-module`
 
 ## Status
 
-**Completed** — module built at `backend/src/department`, wired into `app.module.ts`, build + lint clean, and manually verified end-to-end against a running server (see History 2026-06-12).
+**Completed** — implemented; build + lint pass. Manual API testing pending against a running server.
 
 ## Goal
 
-Provide secure department APIs so administrators can fully manage departments (list with pagination/search + employee counts, create, update, soft delete) with case-insensitive name uniqueness and an employee-dependency guard on deletion — establishing the department foundation that Employee, Asset, Allocation, and Request features depend on.
+Provide secure asset APIs so administrators can manage the company asset inventory (list with pagination/search + allocated-employee info, get details, create, update, update lifecycle status, soft delete) with case-insensitive serial-number uniqueness and an allocation guard — establishing a clean foundation for the future Asset Request, Asset Allocation, and Asset History modules. **Allocation/deallocation, request workflows, and history are explicitly out of scope.**
 
 ---
 
@@ -20,73 +22,90 @@ Provide secure department APIs so administrators can fully manage departments (l
 
 ### Endpoints (all under global `/api` prefix — do **not** repeat `/api` in routes)
 
-| Method | Route              | Access | Purpose                                                                                   |
-| ------ | ------------------ | ------ | ----------------------------------------------------------------------------------------- |
-| GET    | `/departments`     | ADMIN  | List active (non-deleted) departments; pagination + search; employee count per department |
-| POST   | `/departments`     | ADMIN  | Create department                                                                         |
-| PATCH  | `/departments/:id` | ADMIN  | Update department                                                                         |
-| DELETE | `/departments/:id` | ADMIN  | Soft delete (blocked if active employees assigned)                                        |
+| Method | Route                 | Access | Purpose                                                                        |
+| ------ | --------------------- | ------ | ------------------------------------------------------------------------------ |
+| GET    | `/assets`             | ADMIN  | List active (non-deleted) assets; pagination + search; allocated-employee info |
+| GET    | `/assets/:id`         | ADMIN  | Get a single active asset's details                                            |
+| POST   | `/assets`             | ADMIN  | Create asset                                                                   |
+| PATCH  | `/assets/:id`         | ADMIN  | Update asset (serial number / category)                                        |
+| PATCH  | `/assets/:id/status`  | ADMIN  | Update asset lifecycle status (cannot set `ALLOCATED`)                          |
+| DELETE | `/assets/:id`         | ADMIN  | Soft delete (blocked if currently allocated)                                   |
 
-### Module structure (`backend/src/department`)
+### Module structure (`backend/src/asset`)
 
 ```text
-department.module.ts
-department.controller.ts          # thin — no business logic
-department.service.ts             # all rules live here, Prisma access here
+asset.module.ts
+asset.controller.ts              # thin — no business logic
+asset.service.ts                 # all rules live here, Prisma access here
 dto/
-  create-department.dto.ts        # CreateDepartmentDto
-  update-department.dto.ts        # UpdateDepartmentDto extends PartialType(CreateDepartmentDto)
-  list-departments-query.dto.ts   # ListDepartmentsQueryDto (page/limit/search) — mirrors ListEmployeesQueryDto
+  create-asset.dto.ts            # CreateAssetDto
+  update-asset.dto.ts            # UpdateAssetDto extends PartialType(CreateAssetDto)
+  update-asset-status.dto.ts     # UpdateAssetStatusDto
+  list-assets-query.dto.ts       # ListAssetsQueryDto (page/limit/search) — mirrors ListDepartmentsQueryDto
 ```
 
-> The spec's module structure omits a list-query DTO, but the established codebase pattern (feature 005) validates `page`/`limit`/`search` via a dedicated `Query()` DTO so the controller stays thin and bad input is rejected with a 400 by the global `ValidationPipe`. Add `ListDepartmentsQueryDto` to match.
+> The spec's module structure omits a list-query DTO, but the established codebase pattern (005/006) validates `page`/`limit`/`search` via a dedicated `@Query()` DTO so the controller stays thin and bad input is rejected with a 400 by the global `ValidationPipe`. Add `ListAssetsQueryDto` to match.
 
 ### Dependencies / wiring
 
-- `DepartmentModule` imports `PrismaModule` and `AuthModule`.
-- `DepartmentService` injects `PrismaService` and `AuthService`.
-- Register `DepartmentModule` in `app.module.ts`.
-- Before running protected business logic, call the existing `AuthService.isUserActive(user)` (feature 004); if it returns `false`, throw `UnauthorizedException(AuthMessages.UNAUTHORIZED_EXCEPTION)`. Reuse the same `assertActiveSession` helper shape used in `EmployeeService`.
+- `AssetModule` imports `PrismaModule` and `AuthModule`.
+- `AssetService` injects `PrismaService` and `AuthService`.
+- Register `AssetModule` in `app.module.ts`.
+- Before running protected business logic, call the existing `AuthService.isUserActive(user)` (feature 004) via the same `assertActiveSession` helper shape used in `EmployeeService` / `DepartmentService`; if it returns `false`, throw `UnauthorizedException(AuthMessages.UNAUTHORIZED_EXCEPTION)`.
 
 ---
 
 ## Authorization
 
-- **All routes** (`GET`, `POST`, `PATCH /:id`, `DELETE /:id`): `@UseGuards(JwtAuthGuard, RolesGuard)` + `@Roles(Role.ADMIN)`.
-- `ParseUUIDPipe` on the `:id` param (consistent with the Employee controller).
-
-> **Naming note:** the spec writes `Role.ADMIN` directly here (consistent with the codebase enum at `src/generated/prisma/client`) — no `EmployeeRole` discrepancy this time.
+- **All routes**: `@UseGuards(JwtAuthGuard, RolesGuard)` + `@Roles(Role.ADMIN)` (class-level, mirroring the Department controller).
+- `ParseUUIDPipe` on the `:id` param (consistent with Employee/Department controllers).
+- `Role.ADMIN` from the codebase enum at `src/generated/prisma/client` (spec writes `Role.ADMIN` directly — no discrepancy).
 
 ---
 
 ## Business rules to enforce (service layer)
 
-**List** (`GET /departments`):
+**List** (`GET /assets`):
 
-- Exclude soft-deleted departments (`where: { is_deleted: false }`).
-- Order by `created_at` (spec: "ordered by creation date").
-- Return an **employee count** per department — count **active** employees only (`_count` with `where: { is_deleted: false }`), consistent with the delete dependency rule below.
-- Support pagination (`page`, `limit`) and case-insensitive `search` on `name` (Prisma `contains` + `mode: 'insensitive'`).
-- **Never** return `is_deleted`, `deleted_at`, `created_at`, `updated_at` — select an explicit safe field set (`id`, `name`, employee count) rather than fetch-then-delete.
+- Exclude soft-deleted assets (`where: { is_deleted: false }`).
+- Order by `created_at` **descending** (spec).
+- Support pagination (`page`, `limit`) and case-insensitive `search` across **both** `asset_serial_number` **and** `asset_category`. Build the `where` as an `OR`: `{ asset_serial_number: { contains: search, mode: 'insensitive' } }` plus a category match. Prisma enum fields don't support `contains`, so resolve the category arm in JS — compute which `AssetCategory` values contain the (case-insensitive) search term and pass `{ asset_category: { in: matchedCategories } }` (omit the arm when nothing matches).
+- **Include allocated employee info** when the asset is allocated — `allocated_to` as a small summary (id, name, official_email) via a nested `select`, **`null` when unallocated**.
+- **Never** return `is_deleted`, `deleted_at`, `created_at`, `updated_at` — select an explicit safe field set.
+- Response fields: `id`, `asset_serial_number`, `asset_category`, `status`, `allocated_to`.
 
-**Create** (`CreateDepartmentDto`):
+**Get by id** (`GET /assets/:id`):
 
-- Required: `name` only.
-- **Case-insensitive uniqueness** against **active** departments: before insert, query `findFirst({ where: { name: { equals: dto.name, mode: 'insensitive' }, is_deleted: false } })`; if found → `ConflictException(DepartmentMessages.DEPARTMENT_ALREADY_EXISTS)`. ("Human Resources" and "human resources" are duplicates.)
-- Server-set defaults: `is_deleted = false`, `deleted_at = null`. DB generates `id`, `created_at`, `updated_at`.
-- **Reject system-managed fields if sent in the body**: `id`, `is_deleted`, `deleted_at`, `created_at`, `updated_at` (the global `ValidationPipe({ whitelist: true })` strips unknown props; keep these out of the DTO).
-- Return the newly created department (safe field set).
+- Asset must exist and not be soft deleted → else `NotFoundException(ASSET_NOT_FOUND)`.
+- Return the asset (safe field set, including `allocated_to`).
 
-**Update** (`UpdateDepartmentDto extends PartialType(CreateDepartmentDto)`):
+**Create** (`CreateAssetDto`):
 
-- Department must exist and not be soft deleted → else `NotFoundException(DEPARTMENT_NOT_FOUND)`.
-- If `name` changes, re-validate case-insensitive uniqueness against active departments **excluding the current row** (`id: { not: id }`).
-- Return the updated department (safe field set).
+- Required: `asset_serial_number`, `asset_category` only.
+- `asset_serial_number`: `@IsString`, `@IsNotEmpty`, `@Transform(({ value }) => value.trim().toUpperCase())` — **trimmed + normalized to UPPERCASE**, so the canonical uppercase form is what gets persisted. `LAP-001` and `lap-001` both store as `LAP-001` and are duplicates. Because every stored value is uppercase, a plain `equals` (case-sensitive) uniqueness check against **active** assets suffices — `findFirst({ where: { asset_serial_number: dto.asset_serial_number, is_deleted: false } })`; if found → `ConflictException(ASSET_ALREADY_EXISTS)`.
+- `asset_category`: `@IsEnum(AssetCategory)` — allowed: `LAPTOP MOUSE KEYBOARD HEADSET EARPHONE MOBILE_PHONE SCREEN COOLING_PAD IPAD`.
+- Server-set defaults: `status = AVAILABLE`, `allocated_to_id = null`, `is_deleted = false`, `deleted_at = null`. DB generates `id`, `created_at`, `updated_at`.
+- **Reject system-managed fields if sent**: `id`, `status`, `allocated_to_id`, `is_deleted`, `deleted_at`, `created_at`, `updated_at` (global `ValidationPipe({ whitelist: true })` strips unknown props; keep them out of the DTO).
+- Return the newly created asset (safe field set).
+
+**Update** (`UpdateAssetDto extends PartialType(CreateAssetDto)`):
+
+- Asset must exist and not be soft deleted → else `NotFoundException`.
+- The DTO transform uppercases `asset_serial_number` here too. If it changes, re-validate uniqueness (`equals` on the uppercased value) against active assets **excluding the current row** (`id: { not: id }`).
+- Status is **not** updatable here (separate endpoint). Only `asset_serial_number` / `asset_category`.
+- Return the updated asset.
+
+**Update status** (`PATCH /assets/:id/status`, `UpdateAssetStatusDto`):
+
+- Required: `status` — `@IsEnum(AssetStatus)`.
+- **Allocation restriction:** manual transition to `ALLOCATED` is forbidden → `BadRequestException(INVALID_ASSET_STATUS)`. Allocation is owned by the future Asset Request module. (Permitted manual targets: `AVAILABLE`, `MAINTENANCE`, `TRASHED`.)
+- Asset must exist and not be soft deleted.
+- Return the updated asset.
 
 **Soft delete** (`DELETE /:id`):
 
-- Department must exist and not already be deleted → `NotFoundException` / appropriate exception.
-- **Employee-dependency guard:** if any **active** employee belongs to the department (`employee.count({ where: { department_id: id, is_deleted: false } }) > 0`), throw `BadRequestException(DepartmentMessages.DEPARTMENT_HAS_EMPLOYEES)`.
+- Asset must exist and not already be deleted → `NotFoundException` / `BadRequestException(ASSET_ALREADY_DELETED)`.
+- **Allocation guard:** if `allocated_to_id !== null` → `BadRequestException(ASSET_CANNOT_BE_DELETED)`.
 - Set `is_deleted = true`, `deleted_at = new Date()`. Never physically remove.
 - Return a success message.
 
@@ -96,60 +115,63 @@ dto/
 
 `class-validator` / `class-transformer`:
 
-- `CreateDepartmentDto.name`: `@IsString()`, `@IsNotEmpty()`, `@Transform(({ value }) => value.trim())` (mirror the spec). Consider `@MaxLength` for safety, consistent with the search-length constants pattern.
-- `UpdateDepartmentDto`: `export class UpdateDepartmentDto extends PartialType(CreateDepartmentDto) {}` (uses `@nestjs/mapped-types`, already installed for feature 005).
-- `ListDepartmentsQueryDto`: copy `ListEmployeesQueryDto` (optional `page`/`limit` as `@Type(() => Number) @IsInt() @Min(1)`, optional trimmed `search` string with `@MaxLength`).
+- `CreateAssetDto`: `asset_serial_number` → `@IsString()`, `@IsNotEmpty()`, `@Transform(({ value }) => value.trim().toUpperCase())`, `@MaxLength`; `asset_category` → `@IsEnum(AssetCategory)`.
+- `UpdateAssetDto`: `export class UpdateAssetDto extends PartialType(CreateAssetDto) {}` (`@nestjs/mapped-types`, already installed).
+- `UpdateAssetStatusDto`: `status` → `@IsEnum(AssetStatus)`.
+- `ListAssetsQueryDto`: copy `ListDepartmentsQueryDto` (optional `page`/`limit` as `@Type(() => Number) @IsInt() @Min(1)`, optional trimmed `search` with `@MaxLength`).
 
 ## Messages
 
-Add a new `DepartmentMessages` object to the **existing** singular `backend/src/constant/messages.constant.ts` (matching the established layout, **not** the spec's plural `src/constants/`). Keys:
+Add a new `AssetMessages` object to the **existing** singular `backend/src/constant/messages.constant.ts` (matching the established layout — **not** the spec's plural `src/constants/`). Keys (per spec, plus a double-delete key consistent with `DepartmentMessages`):
 
 ```ts
-export const DepartmentMessages = {
-  DEPARTMENT_NOT_FOUND: "Department not found",
-  DEPARTMENT_ALREADY_EXISTS: "Department already exists",
-  DEPARTMENT_CREATED_SUCCESSFULLY: "Department created successfully",
-  DEPARTMENT_UPDATED_SUCCESSFULLY: "Department updated successfully",
-  DEPARTMENT_DELETED_SUCCESSFULLY: "Department deleted successfully",
-  DEPARTMENT_HAS_EMPLOYEES:
-    "Department cannot be deleted while employees are assigned",
+export const AssetMessages = {
+  ASSET_NOT_FOUND: 'Asset not found',
+  ASSET_ALREADY_EXISTS: 'Asset already exists',
+  ASSET_CREATED_SUCCESSFULLY: 'Asset created successfully',
+  ASSET_UPDATED_SUCCESSFULLY: 'Asset updated successfully',
+  ASSET_STATUS_UPDATED_SUCCESSFULLY: 'Asset status updated successfully',
+  ASSET_DELETED_SUCCESSFULLY: 'Asset deleted successfully',
+  ASSET_ALREADY_DELETED: 'Asset is already deleted',
+  ASSET_CANNOT_BE_DELETED: 'Allocated asset cannot be deleted',
+  INVALID_ASSET_STATUS: 'Invalid asset status transition',
 } as const;
 ```
 
-> Note: `EmployeeMessages` already defines `DEPARTMENT_NOT_FOUND` (used when resolving a department for an employee). Keep the department-module copy under `DepartmentMessages` so each module owns its wording; don't reach across into `EmployeeMessages`. No hardcoded strings at throw sites.
+Add asset list/search/serial length limits to `values.constant.ts` (mirror the department constants). No hardcoded strings at throw sites.
 
 ---
 
 ## Discrepancies / decisions flagged
 
-1. **Spec title** — corrected: the spec file `006-department-crud-apis.md` heading was "Feature 005 …" and is now "Feature 006 — Department Management Module" (005 was the Employee module, already completed).
-2. **DB unique constraint vs. spec's "active-only, case-insensitive" rule** — the schema declares `name String @unique`, which is a **case-sensitive** constraint spanning **all** rows (including soft-deleted). The spec wants (a) _case-insensitive_ uniqueness and (b) checked only against _active_ departments. Implications:
-   - Case-insensitivity must be enforced in the **service** (Prisma `mode: 'insensitive'` query) — the DB `@unique` alone won't catch `"HR"` vs `"hr"`.
-   - The DB `@unique` will still **reject re-creating a name that exactly matches a soft-deleted department's name**, even though the spec's active-only check would allow it. Same tension noted for employee email-uniqueness in feature 005. **Decision:** enforce the spec's active-only + case-insensitive check in the service, and additionally catch Prisma `P2002` and map it to `DEPARTMENT_ALREADY_EXISTS` (friendly conflict) for the soft-deleted-collision edge case. No schema change for this feature. (If the business truly needs to reuse soft-deleted names, that's a separate schema decision — out of scope here.)
-3. **Employee count semantics** — "employee count for each department" counted as **active** employees (`is_deleted: false`), aligning with the delete guard. Confirm if the total (including soft-deleted) is wanted instead.
-4. **Messages path** — singular `src/constant/` (as in 003/004/005), not the spec's plural `src/constants/`.
+1. **Serial number: case-insensitive uniqueness, stored UPPERCASE** _(user decision)_. `LAP-001` and `lap-001` are the same asset, and the canonical **uppercase** form is what's persisted. The DTO `@Transform` trims + uppercases, so:
+   - All stored serials are uppercase → a plain `equals` (case-sensitive) service check against **active** assets is sufficient to catch case-insensitive duplicates; no `mode: 'insensitive'` needed.
+   - The DB `@unique` on `asset_serial_number` is plain/case-sensitive and spans **all** rows (incl. soft-deleted) — unlike `Department.name` (which has a partial `lower(name)` index). It will still **reject re-creating a serial that exactly matches a soft-deleted asset's serial**, even though the spec's active-only check would allow it (same tension as employee email). **Decision:** keep the active-only check in the service, and additionally catch Prisma `P2002` → map to `ASSET_ALREADY_EXISTS` for the soft-deleted-collision race. **No schema change** for this feature.
+2. **Search scope — serial number AND category** _(user decision)_. Spec updated. Serial via `contains`/`mode: 'insensitive'`; category resolved in JS (enum fields can't use `contains`) → `asset_category: { in: matchedCategories }`, combined with an `OR`.
+3. **Messages path** — singular `src/constant/` (as in 003/004/005/006), not the spec's plural `src/constants/` _(confirmed by user)_.
+4. **`allocated_to` shape** — small employee summary (`id`, name, `official_email`) when allocated, **`null` when unallocated** _(confirmed by user)_. Aligns with the Employee module's relation-summary pattern. Since this module can't allocate assets, allocated rows only appear from seed data, but the read shape is built now for forward-compat.
 
 ---
 
 ## Definition of Done (from spec)
 
-- [x] APIs: Get All, Create, Update, Soft Delete — all implemented.
-- [x] DTOs: `CreateDepartmentDto`, `UpdateDepartmentDto` (+ `ListDepartmentsQueryDto`) with validation.
+- [x] APIs: Get All, Get By Id, Create, Update, Update Status, Soft Delete — all implemented.
+- [x] DTOs: `CreateAssetDto`, `UpdateAssetDto`, `UpdateAssetStatusDto` (+ `ListAssetsQueryDto`) with validation.
 - [x] All routes protected with `JwtAuthGuard + RolesGuard + @Roles(Role.ADMIN)`; service-level `AuthService.isUserActive` session guard wired in.
-- [x] Case-insensitive department-name uniqueness enforced (create + update).
-- [x] Soft delete implemented; soft-deleted departments excluded from queries; internal fields never returned.
-- [x] Department deletion blocked when active employees are assigned.
-- [x] No hardcoded exception messages (`DepartmentMessages`).
-- [x] `npm run build` passes; `npm run lint` passes; manual API testing completed (create dup blocked, delete-with-employees blocked, soft-deleted excluded).
+- [x] Case-insensitive serial-number uniqueness enforced (create + update); category validated via `@IsEnum`.
+- [x] Soft delete implemented; soft-deleted assets excluded from queries; internal fields never returned.
+- [x] Status update rejects `ALLOCATED` (`BadRequestException`); allocated assets cannot be deleted (`BadRequestException`).
+- [x] No hardcoded exception messages (`AssetMessages`).
+- [x] `npm run build` passes; `npm run lint` passes; manual API testing completed (dup blocked, soft-deleted excluded, status-`ALLOCATED` blocked, allocated-delete blocked).
 
 ---
 
 ## Notes / decisions
 
-- Schema is the source of truth — no invented fields. The `Department` model carries only `id`, `name`, `employees[]`, soft-delete fields, and timestamps (**no `description`** field), so **no migration is required**.
+- Schema is the source of truth — no invented fields. The `Asset` model carries `id`, `asset_serial_number`, `asset_category`, `status`, `allocated_to_id`/`allocated_to`, relations (`requests`, `allocation_history`), soft-delete fields, and timestamps — **no migration required**.
 - Reuses the auth module (003/004): `JwtAuthGuard`, `RolesGuard`, `@Roles(Role.ADMIN)`, exported `AuthService.isUserActive`.
-- Mirror the Employee module patterns: a single safe `select` projection reused by every endpoint, `assertActiveSession` helper, `{ data, pagination }` list shape, `{ message, data }` mutation shape, `{ message }` delete shape, `ParseUUIDPipe` on `:id`, and a `toWriteError`-style `P2002` mapper for race-safe conflicts.
-- Suggested branch: `feature/department-crud-apis` (per development-rules git naming).
+- Mirror the Employee/Department patterns: a single safe `select` projection reused by every endpoint, `assertActiveSession` helper, `{ data, pagination }` list shape, `{ message, data }` mutation shape, `{ message }` delete shape, `ParseUUIDPipe` on `:id`, and a `toWriteError`-style `P2002` mapper for race-safe conflicts.
+- Branch: `feature/assets-crud-module` (per development-rules git naming).
 
 ## History
 
@@ -172,3 +194,7 @@ export const DepartmentMessages = {
 - 2026-06-11 — **Started feature 006 (Department Management Module).** Read spec `specs/006-department-crud-apis.md` and re-checked the live backend (Department schema model, Employee module patterns from 005, `messages.constant.ts`, `ListEmployeesQueryDto`). Rewrote current-feature.md with the 006 plan: 4 admin endpoints (list w/ pagination+search+employee-count, create, update, soft delete) under `src/department` (thin controller, service-only logic, `CreateDepartmentDto` / `UpdateDepartmentDto` / added `ListDepartmentsQueryDto`), all routes `JwtAuthGuard + RolesGuard + @Roles(Role.ADMIN)` + service-level `AuthService.isUserActive` guard, case-insensitive active-only name uniqueness (create + update), soft delete with an active-employee dependency guard, a new `DepartmentMessages` constant, and a safe `select` that hides internal fields. **No schema change / no migration** — the `Department` model already has every field (note: **no `description` field** exists — don't invent one). **Flagged four items:** (1) the DB `name @unique` is case-sensitive and spans soft-deleted rows, so case-insensitivity + active-only must be enforced in the service, with a `P2002` fallback mapped to `DEPARTMENT_ALREADY_EXISTS` for the soft-deleted-name-collision edge case; (2) employee count interpreted as active employees only; (3) singular `constant/` messages path (not the spec's plural). Status: Not Started, ready to implement.
 
 - 2026-06-12 — **Implemented & verified (006 — Department Management Module).** Built `src/department/` (module, thin controller, service, 3 DTOs) mirroring the 005 Employee patterns. **Controller:** `@Controller('departments')` with class-level `@UseGuards(JwtAuthGuard, RolesGuard)` + `@Roles(Role.ADMIN)` (all 4 routes admin-only); `ParseUUIDPipe` on `:id`. **Service:** every method calls `assertActiveSession` → `AuthService.isUserActive` (throws `UnauthorizedException(AuthMessages.UNAUTHORIZED_EXCEPTION)` if inactive); a single `DEPARTMENT_SAFE_SELECT` (`satisfies Prisma.DepartmentSelect`) projecting only `id`, `name`, and a **filtered `_count`** of active employees (`employees: { where: { is_deleted: false } }`) — so `is_deleted`/`deleted_at`/`created_at`/`updated_at` are never selected; a `toDepartment` mapper reshapes the row to `{ id, name, employee_count }`. List: `is_deleted: false`, ordered by `created_at asc`, case-insensitive `contains` search on `name`, `{ data, pagination }` shape (page/limit clamped in service). Create/Update: case-insensitive active-only uniqueness via `assertNameAvailable` (`equals` + `mode: 'insensitive'`, `is_deleted: false`, `NOT: { id }` on update); `P2002` mapped to `DEPARTMENT_ALREADY_EXISTS` via `toWriteError` (catches the soft-deleted-name collision the DB `@unique` enforces). Delete: existence + already-deleted guard, then `employee.count({ department_id, is_deleted: false }) > 0` → `BadRequestException(DEPARTMENT_HAS_EMPLOYEES)`, else set `is_deleted/deleted_at`. **Constants:** added `DepartmentMessages` to `src/constant/messages.constant.ts` (incl. an extra `DEPARTMENT_ALREADY_DELETED` for the double-delete case) and department list/name length limits to `values.constant.ts`. Registered `DepartmentModule` in `app/app.module.ts`. **Manual testing — 18 scenarios, all pass** against a running server (admin `Admin@123`): list (6 depts, safe fields, employee counts, pagination); create dup (case-insensitive) 409; create `'  Legal  '` trimmed → 201; case-insensitive dup 409; empty name 400; update 200; update→existing-name 409; update non-existent 404; bad-UUID 400; delete Finance (2 employees) → 400 `DEPARTMENT_HAS_EMPLOYEES`; delete Legal (no employees) → 200; double-delete → 400; soft-deleted excluded from list (total back to 6); case-insensitive search; delete bad-UUID 400; recreate-dup 409 message; unauthenticated 401; EMPLOYEE→department routes 403 (via a temp account). Test rows (temp employee + Legal department) hard-deleted afterward via a throwaway tsx script; DB back to the original 6 departments / 12 employees. **One EADDRINUSE gotcha:** a stale pre-session server held port 3000 (served 404 for the new routes) — killed it and restarted before testing. `npm run build` and `npm run lint` both pass. Status: Completed.
+
+- 2026-06-12 — **Started feature 007 (Asset Management Module).** Read spec `specs/007-assets-crud-apis.md` and re-checked the live backend (the `Asset` schema model, the Department/Employee module patterns from 005/006, `messages.constant.ts`, `values.constant.ts`, `DepartmentService`). Created branch `feature/assets-crud-module` off main and rewrote current-feature.md with the 007 plan: 6 admin endpoints (list w/ pagination+search+allocated-employee info, get-by-id, create, update, update-status, soft delete) under `src/asset` (thin controller, service-only logic, 4 DTOs incl. an added `ListAssetsQueryDto`), all routes `JwtAuthGuard + RolesGuard + @Roles(Role.ADMIN)` + service-level `AuthService.isUserActive` guard, case-insensitive active-only serial-number uniqueness (create + update), `@IsEnum(AssetCategory)` / `@IsEnum(AssetStatus)` validation, status update that rejects a manual `ALLOCATED` transition (`BadRequestException`), soft delete blocked when `allocated_to_id !== null`, a new `AssetMessages` constant, and a safe `select` (incl. an `allocated_to` employee summary) that hides internal fields. **No schema change / no migration** — the `Asset` model already has every field. **Four items raised; all resolved by the user the same day:** (1) **serial number** — `LAP-001` / `lap-001` are duplicates and the canonical **UPPERCASE** form is persisted (DTO `@Transform` trims + uppercases); since all stored serials are uppercase, a plain `equals` active-only check suffices, with a `P2002` fallback → `ASSET_ALREADY_EXISTS` for the soft-deleted-serial collision (`Asset.asset_serial_number` is a plain case-sensitive `@unique`, no partial `lower()` index like Department's); (2) **search** spans **both** `asset_serial_number` (substring) **and** `asset_category` (enum resolved in JS → `in`) — spec updated; (3) **messages** stay at the singular `constant/` path (not the spec's plural); (4) **`allocated_to`** is an employee summary when allocated, **`null` otherwise**. Spec file `007-assets-crud-apis.md` updated for items (1) and (2). Status: Not Started, ready to implement.
+
+- 2026-06-12 — **Implemented (007 — Asset Management Module).** Built `backend/src/asset/` (module, thin controller, service, 4 DTOs) mirroring the 005/006 patterns. **Controller:** `@Controller('assets')` with class-level `@UseGuards(JwtAuthGuard, RolesGuard)` + `@Roles(Role.ADMIN)` (all 6 routes admin-only); `ParseUUIDPipe` on `:id`; `GET /assets` (list), `GET /assets/:id`, `POST /assets`, `PATCH /assets/:id`, `PATCH /assets/:id/status`, `DELETE /assets/:id`. **Service:** every method calls `assertActiveSession` → `AuthService.isUserActive` (throws `UnauthorizedException(AuthMessages.UNAUTHORIZED_EXCEPTION)` if inactive); a single `ASSET_SAFE_SELECT` (`satisfies Prisma.AssetSelect`) projecting `id`, `asset_serial_number`, `asset_category`, `status`, and an `allocated_to` employee summary (`id`, `first_name`, `last_name`, `official_email`; `null` when unallocated) — so `is_deleted`/`deleted_at`/`created_at`/`updated_at` are never selected. List: `is_deleted: false`, `orderBy created_at desc`, page/limit clamped in service (`ASSET_LIST_*` constants), `{ data, pagination }` shape; search builds an `OR` over `asset_serial_number` (`contains`, `mode: 'insensitive'`) + matched `AssetCategory` values resolved in JS (`buildSearchOr` → `asset_category: { in }`, arm omitted when no category matches). Create/Update: serial uniqueness via `assertSerialAvailable` (plain `equals` on the DTO-uppercased value, `is_deleted: false`, `NOT: { id }` on update); server defaults set explicitly; `P2002` → `ASSET_ALREADY_EXISTS` (covers the soft-deleted-serial collision the all-rows DB `@unique` enforces) and `P2025` → `ASSET_NOT_FOUND` via `toWriteError`. Update writes scoped to `{ id, is_deleted: false }`. Update-status: rejects any status outside `MANUAL_ASSET_STATUSES` (`AVAILABLE`/`MAINTENANCE`/`TRASHED`) — i.e. a manual `ALLOCATED` → `BadRequestException(INVALID_ASSET_STATUS)`. Delete: existence + already-deleted guard, then allocation guard (`allocated_to_id !== null` → `BadRequestException(ASSET_CANNOT_BE_DELETED)`), else set `is_deleted/deleted_at`. **DTOs:** `CreateAssetDto` (`asset_serial_number` → `@IsString/@IsNotEmpty/@MaxLength/@Transform` trim+UPPERCASE; `asset_category` → `@IsEnum(AssetCategory)`), `UpdateAssetDto extends PartialType(CreateAssetDto)`, `UpdateAssetStatusDto` (`status` → `@IsEnum(AssetStatus)`), `ListAssetsQueryDto` (page/limit/search, copied from `ListDepartmentsQueryDto`). **Constants:** added `AssetMessages` to `src/constant/messages.constant.ts` and `ASSET_LIST_DEFAULT_LIMIT`/`ASSET_LIST_MAX_LIMIT`/`ASSET_SEARCH_MAX_LENGTH`/`ASSET_SERIAL_NUMBER_MAX_LENGTH` to `values.constant.ts` (singular `constant/` path, not the spec's plural). Registered `AssetModule` in `app/app.module.ts`. **No schema change / no migration.** `npm run build` and `npm run lint` both pass. **Manual API testing against a running server still pending.** Status: Implemented; ready for manual verification.
