@@ -168,6 +168,10 @@ model AssetAllocationHistory {
     references: [id]
   )
 
+  // Reuses the existing RequestType enum (carried over from the AssetRequest that
+  // triggered the record): NEW_ASSET / REMOVE_ASSET / MAINTENANCE.
+  event_type RequestType
+
   allocated_at DateTime @default(now())
 
   returned_at DateTime?
@@ -178,6 +182,7 @@ model AssetAllocationHistory {
 
   @@index([asset_id])
   @@index([employee_id])
+  @@index([event_type])
 
   @@map("asset_allocation_history")
 }

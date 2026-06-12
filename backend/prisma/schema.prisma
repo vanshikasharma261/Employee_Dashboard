@@ -174,6 +174,12 @@ model AssetAllocationHistory {
   employee_id String   @db.Uuid
   employee    Employee @relation(fields: [employee_id], references: [id])
 
+  // The kind of event this record captures. Reuses the existing RequestType enum
+  // (carried over from the AssetRequest that triggered the record) rather than a
+  // parallel HistoryEventType — all three values (NEW_ASSET / REMOVE_ASSET /
+  // MAINTENANCE) map directly to allocation / deallocation / maintenance events.
+  event_type RequestType
+
   allocated_at DateTime @default(now())
 
   returned_at DateTime?
@@ -184,6 +190,7 @@ model AssetAllocationHistory {
 
   @@index([asset_id])
   @@index([employee_id])
+  @@index([event_type])
   @@map("asset_allocation_history")
 }
 

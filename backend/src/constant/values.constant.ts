@@ -50,6 +50,24 @@ export const ASSET_SEARCH_MAX_LENGTH = 100;
 /** Upper bound on an asset serial number. */
 export const ASSET_SERIAL_NUMBER_MAX_LENGTH = 255;
 
+/** Default page size for paginated asset-request listings. */
+export const ASSET_REQUEST_LIST_DEFAULT_LIMIT = 10;
+
+/** Upper bound on a single page of asset requests, to cap query cost. */
+export const ASSET_REQUEST_LIST_MAX_LIMIT = 100;
+
+/** Upper bound on an asset-request description. */
+export const ASSET_REQUEST_DESCRIPTION_MAX_LENGTH = 1000;
+
+/** Upper bound on an admin's response on an asset request. */
+export const ADMIN_RESPONSE_MAX_LENGTH = 1000;
+
+/** Default page size for paginated asset-history listings. */
+export const ASSET_HISTORY_LIST_DEFAULT_LIMIT = 10;
+
+/** Upper bound on a single page of asset-history records, to cap query cost. */
+export const ASSET_HISTORY_LIST_MAX_LIMIT = 100;
+
 /** Employee statuses permitted to authenticate (business rule). */
 export const LOGIN_ALLOWED_STATUSES: EmployeeStatus[] = [
   EmployeeStatus.WORKING,
