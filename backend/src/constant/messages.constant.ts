@@ -51,3 +51,24 @@ export const AssetMessages = {
   ASSET_CANNOT_BE_DELETED: 'Allocated asset cannot be deleted',
   INVALID_ASSET_STATUS: 'Invalid asset status transition',
 } as const;
+
+/** Asset-request workflow messages (feature 008). */
+export const AssetRequestMessages = {
+  REQUEST_NOT_FOUND: 'Asset request not found',
+  ASSET_NOT_FOUND: 'Asset not found',
+  REQUEST_CREATED_SUCCESSFULLY: 'Asset request created successfully',
+  REQUEST_APPROVED_SUCCESSFULLY: 'Asset request approved successfully',
+  REQUEST_REJECTED_SUCCESSFULLY: 'Asset request rejected successfully',
+  REQUEST_ALREADY_PROCESSED: 'Request has already been processed',
+  ASSET_NOT_AVAILABLE: 'Asset is not available for allocation',
+  INVALID_ASSET_OWNER: 'Asset is not allocated to the employee',
+  EMPLOYEE_NOT_ALLOCATABLE:
+    'Asset cannot be allocated to a non-working employee',
+} as const;
+
+/** Asset allocation-history (audit log) messages (feature 009). */
+export const AssetHistoryMessages = {
+  HISTORY_NOT_FOUND: 'Asset history not found',
+  ASSET_NOT_FOUND: 'Asset not found',
+  EMPLOYEE_NOT_FOUND: 'Employee not found',
+} as const;

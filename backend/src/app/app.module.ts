@@ -7,6 +7,8 @@ import { AuthModule } from '../auth/auth.module';
 import { EmployeeModule } from '../employee/employee.module';
 import { DepartmentModule } from '../department/department.module';
 import { AssetModule } from '../asset/asset.module';
+import { AssetHistoryModule } from '../asset-history/asset-history.module';
+import { AssetRequestModule } from '../asset-request/asset-request.module';
 
 @Module({
   imports: [
@@ -19,6 +21,8 @@ import { AssetModule } from '../asset/asset.module';
     EmployeeModule,
     DepartmentModule,
     AssetModule,
+    AssetHistoryModule,
+    AssetRequestModule,
   ],
   controllers: [AppController],
   providers: [],
