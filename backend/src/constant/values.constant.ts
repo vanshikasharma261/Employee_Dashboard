@@ -26,6 +26,18 @@ export const EMPLOYEE_SEARCH_MAX_LENGTH = 100;
 /** Upper bound on free-text employee fields (names, addresses). */
 export const EMPLOYEE_TEXT_MAX_LENGTH = 500;
 
+/** Default page size for paginated department listings. */
+export const DEPARTMENT_LIST_DEFAULT_LIMIT = 10;
+
+/** Upper bound on a single page of departments, to cap query cost. */
+export const DEPARTMENT_LIST_MAX_LIMIT = 100;
+
+/** Upper bound on a free-text department search term, to cap query cost. */
+export const DEPARTMENT_SEARCH_MAX_LENGTH = 100;
+
+/** Upper bound on a department name. */
+export const DEPARTMENT_NAME_MAX_LENGTH = 255;
+
 /** Employee statuses permitted to authenticate (business rule). */
 export const LOGIN_ALLOWED_STATUSES: EmployeeStatus[] = [
   EmployeeStatus.WORKING,

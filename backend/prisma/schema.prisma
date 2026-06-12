@@ -58,8 +58,15 @@ enum RequestStatus {
 }
 
 model Department {
-  id   String @id @default(uuid()) @db.Uuid
-  name String @unique
+  id String @id @default(uuid()) @db.Uuid
+
+  // Case-insensitive uniqueness among *active* departments is enforced by a
+  // partial expression index — `lower(name) WHERE is_deleted = false` — created
+  // in the `department_case_insensitive_name_unique` migration. Prisma's schema
+  // DSL cannot express functional/partial indexes, so it is managed via raw SQL
+  // rather than an `@unique` here. This also lets a name be reused once the
+  // department holding it is soft-deleted.
+  name String
 
   employees Employee[]
 

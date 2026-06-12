@@ -26,3 +26,15 @@ export const EmployeeMessages = {
   EMPLOYEE_CODE_GENERATION_FAILED:
     'Could not generate a unique employee code, please retry',
 } as const;
+
+/** Department-management messages (feature 006). */
+export const DepartmentMessages = {
+  DEPARTMENT_NOT_FOUND: 'Department not found',
+  DEPARTMENT_ALREADY_EXISTS: 'Department already exists',
+  DEPARTMENT_CREATED_SUCCESSFULLY: 'Department created successfully',
+  DEPARTMENT_UPDATED_SUCCESSFULLY: 'Department updated successfully',
+  DEPARTMENT_DELETED_SUCCESSFULLY: 'Department deleted successfully',
+  DEPARTMENT_ALREADY_DELETED: 'Department is already deleted',
+  DEPARTMENT_HAS_EMPLOYEES:
+    'Department cannot be deleted while employees are assigned',
+} as const;

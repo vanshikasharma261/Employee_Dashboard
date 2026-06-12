@@ -1,18 +1,18 @@
 ## Current Feature
 
-**005 — Employee Management Module**
+**006 — Department Management Module**
 
-Implement all employee-related backend APIs: full CRUD for administrators plus a self-profile endpoint for any authenticated employee. Follows the established architecture (Controller → Service → PrismaService → PostgreSQL) with all business logic confined to the service layer. Backend-only; **no schema changes** (the `Employee` model already exists with every field this feature needs).
+Implement the Department Management backend APIs: full CRUD for administrators (list, create, update, soft delete) over the `Department` model. Follows the established architecture (Controller → Service → PrismaService → PostgreSQL) with all business logic confined to the service layer, mirroring the Employee module (feature 005). Backend-only; **no schema changes** (the `Department` model already exists with every field this feature needs).
 
-Spec: [specs/005-employee-crud-apis.md](../specs/005-employee-crud-apis.md)
+Spec: [specs/006-department-crud-apis.md](../specs/006-department-crud-apis.md)
 
 ## Status
 
-**Completed & verified** — all 7 endpoints implemented, built, linted, and manually tested end-to-end against a running server. Both open questions resolved: (1) `employee_code` is **auto-generated** (`EMPxxx`, sequential) in the service create transaction — not a DTO input; (2) messages live at the existing singular `src/constant/messages.constant.ts`.
+**Completed** — module built at `backend/src/department`, wired into `app.module.ts`, build + lint clean, and manually verified end-to-end against a running server (see History 2026-06-12).
 
 ## Goal
 
-Provide secure employee APIs so administrators can fully manage employee records (create, list, read, update, change status, soft delete) and any authenticated employee can fetch their own profile — establishing the employee foundation that Department, Asset, Allocation, and Request features depend on.
+Provide secure department APIs so administrators can fully manage departments (list with pagination/search + employee counts, create, update, soft delete) with case-insensitive name uniqueness and an employee-dependency guard on deletion — establishing the department foundation that Employee, Asset, Allocation, and Request features depend on.
 
 ---
 
@@ -20,118 +20,136 @@ Provide secure employee APIs so administrators can fully manage employee records
 
 ### Endpoints (all under global `/api` prefix — do **not** repeat `/api` in routes)
 
-| Method | Route | Access | Purpose |
-|--------|-------|--------|---------|
-| GET | `/employees` | ADMIN | List active (non-deleted) employees; pagination + search |
-| GET | `/employees/me` | ADMIN, EMPLOYEE | Current authenticated employee's profile (from `request.user`) |
-| GET | `/employees/:id` | ADMIN | Single employee (must exist, not deleted) |
-| POST | `/employees` | ADMIN | Create employee |
-| PATCH | `/employees/:id` | ADMIN | Update employee |
-| PATCH | `/employees/:id/status` | ADMIN | Update employee status |
-| DELETE | `/employees/:id` | ADMIN | Soft delete |
+| Method | Route              | Access | Purpose                                                                                   |
+| ------ | ------------------ | ------ | ----------------------------------------------------------------------------------------- |
+| GET    | `/departments`     | ADMIN  | List active (non-deleted) departments; pagination + search; employee count per department |
+| POST   | `/departments`     | ADMIN  | Create department                                                                         |
+| PATCH  | `/departments/:id` | ADMIN  | Update department                                                                         |
+| DELETE | `/departments/:id` | ADMIN  | Soft delete (blocked if active employees assigned)                                        |
 
-> **Route ordering:** declare `GET /employees/me` **before** `GET /employees/:id` in the controller so `me` is not captured as an `:id`.
-
-### Module structure (`backend/src/employee`)
+### Module structure (`backend/src/department`)
 
 ```text
-employee.module.ts
-employee.controller.ts        # thin — no business logic
-employee.service.ts           # all rules live here, Prisma access here
+department.module.ts
+department.controller.ts          # thin — no business logic
+department.service.ts             # all rules live here, Prisma access here
 dto/
-  create-employee.dto.ts      # CreateEmployeeDto
-  update-employee.dto.ts      # UpdateEmployeeDto extends PartialType(CreateEmployeeDto)
-  update-employee-status.dto.ts
+  create-department.dto.ts        # CreateDepartmentDto
+  update-department.dto.ts        # UpdateDepartmentDto extends PartialType(CreateDepartmentDto)
+  list-departments-query.dto.ts   # ListDepartmentsQueryDto (page/limit/search) — mirrors ListEmployeesQueryDto
 ```
+
+> The spec's module structure omits a list-query DTO, but the established codebase pattern (feature 005) validates `page`/`limit`/`search` via a dedicated `Query()` DTO so the controller stays thin and bad input is rejected with a 400 by the global `ValidationPipe`. Add `ListDepartmentsQueryDto` to match.
 
 ### Dependencies / wiring
 
-- `EmployeeModule` imports `PrismaModule` and `AuthModule`.
-- `EmployeeService` injects `PrismaService` and `AuthService`.
-- Before running protected business logic, call the existing `AuthService.isUserActive(user)` (feature 004); if it returns `false`, throw `UnauthorizedException(AuthMessages.UNAUTHORIZED_EXCEPTION)`.
+- `DepartmentModule` imports `PrismaModule` and `AuthModule`.
+- `DepartmentService` injects `PrismaService` and `AuthService`.
+- Register `DepartmentModule` in `app.module.ts`.
+- Before running protected business logic, call the existing `AuthService.isUserActive(user)` (feature 004); if it returns `false`, throw `UnauthorizedException(AuthMessages.UNAUTHORIZED_EXCEPTION)`. Reuse the same `assertActiveSession` helper shape used in `EmployeeService`.
 
 ---
 
 ## Authorization
 
-- **Admin routes** (`GET /employees`, `GET /employees/:id`, `POST`, `PATCH /:id`, `PATCH /:id/status`, `DELETE /:id`): `@UseGuards(JwtAuthGuard, RolesGuard)` + `@Roles(Role.ADMIN)`.
-- **Self route** (`GET /employees/me`): `@UseGuards(JwtAuthGuard)` only.
+- **All routes** (`GET`, `POST`, `PATCH /:id`, `DELETE /:id`): `@UseGuards(JwtAuthGuard, RolesGuard)` + `@Roles(Role.ADMIN)`.
+- `ParseUUIDPipe` on the `:id` param (consistent with the Employee controller).
 
-> **Naming note:** the spec writes `EmployeeRole.ADMIN`, but the generated enum in this codebase is `Role` (`src/generated/prisma/client`), and the existing `@Roles` decorator is typed `(...roles: Role[])`. Use `Role.ADMIN` for consistency with the auth module already in place.
+> **Naming note:** the spec writes `Role.ADMIN` directly here (consistent with the codebase enum at `src/generated/prisma/client`) — no `EmployeeRole` discrepancy this time.
 
 ---
 
 ## Business rules to enforce (service layer)
 
-**Create** (`CreateEmployeeDto`):
-- Required: `first_name`, `last_name`, `official_email`, `personal_email`, `password`, `role`, `department_name`, `present_address`, `permanent_address`, `joining_date`.
-- Optional: `reporting_manager_official_email`.
-- Resolve **`department_name` → `department_id`**: department must exist and not be soft deleted, else `BadRequest`/`NotFound` (`DEPARTMENT_NOT_FOUND`).
-- `official_email` and `personal_email` must be unique → `ConflictException` (`EMAIL_ALREADY_EXISTS`).
-- Resolve **`reporting_manager_official_email` → `reporting_manager_id`** when provided: manager must exist, not be deleted, have `status = WORKING`, and cannot be the employee themselves → `REPORTING_MANAGER_NOT_FOUND` / appropriate `BadRequest`.
-- Hash `password` with `bcrypt.hash()` before persistence.
-- Server-set defaults: `status = WORKING`, `is_deleted = false`, `is_active = false`, `refresh_token_hash = null`, `deleted_at = null`. DB generates `id`, `created_at`, `updated_at`.
-- **Reject system-managed fields if sent in the body**: `id`, `status`, `created_at`, `updated_at`, `deleted_at`, `is_deleted`, `is_active`, `refresh_token_hash` (the global `ValidationPipe({ whitelist: true })` already strips unknown props; keep these out of the DTO).
+**List** (`GET /departments`):
 
-**Update** (`UpdateEmployeeDto extends PartialType(CreateEmployeeDto)`):
-- Employee must exist and not be deleted.
-- Re-validate uniqueness for any changed email, re-validate department/manager if changed, re-hash password if provided.
+- Exclude soft-deleted departments (`where: { is_deleted: false }`).
+- Order by `created_at` (spec: "ordered by creation date").
+- Return an **employee count** per department — count **active** employees only (`_count` with `where: { is_deleted: false }`), consistent with the delete dependency rule below.
+- Support pagination (`page`, `limit`) and case-insensitive `search` on `name` (Prisma `contains` + `mode: 'insensitive'`).
+- **Never** return `is_deleted`, `deleted_at`, `created_at`, `updated_at` — select an explicit safe field set (`id`, `name`, employee count) rather than fetch-then-delete.
 
-**Update status** (`UpdateEmployeeStatusDto`):
-- `@IsEnum(EmployeeStatus)` — one of `WORKING | ON_NOTICE | RESIGNED | TERMINATED`.
-- Admin only. Employee history must never be deleted (status change only).
+**Create** (`CreateDepartmentDto`):
+
+- Required: `name` only.
+- **Case-insensitive uniqueness** against **active** departments: before insert, query `findFirst({ where: { name: { equals: dto.name, mode: 'insensitive' }, is_deleted: false } })`; if found → `ConflictException(DepartmentMessages.DEPARTMENT_ALREADY_EXISTS)`. ("Human Resources" and "human resources" are duplicates.)
+- Server-set defaults: `is_deleted = false`, `deleted_at = null`. DB generates `id`, `created_at`, `updated_at`.
+- **Reject system-managed fields if sent in the body**: `id`, `is_deleted`, `deleted_at`, `created_at`, `updated_at` (the global `ValidationPipe({ whitelist: true })` strips unknown props; keep these out of the DTO).
+- Return the newly created department (safe field set).
+
+**Update** (`UpdateDepartmentDto extends PartialType(CreateDepartmentDto)`):
+
+- Department must exist and not be soft deleted → else `NotFoundException(DEPARTMENT_NOT_FOUND)`.
+- If `name` changes, re-validate case-insensitive uniqueness against active departments **excluding the current row** (`id: { not: id }`).
+- Return the updated department (safe field set).
 
 **Soft delete** (`DELETE /:id`):
-- Employee must exist and not already be deleted.
+
+- Department must exist and not already be deleted → `NotFoundException` / appropriate exception.
+- **Employee-dependency guard:** if any **active** employee belongs to the department (`employee.count({ where: { department_id: id, is_deleted: false } }) > 0`), throw `BadRequestException(DepartmentMessages.DEPARTMENT_HAS_EMPLOYEES)`.
 - Set `is_deleted = true`, `deleted_at = new Date()`. Never physically remove.
-
----
-
-## Security / response safety
-
-- **Never** return `password`, `refresh_token_hash`, `is_deleted`, `deleted_at`, `created_at`, `updated_at` from any employee endpoint — select an explicit safe field set (do not `select` the excluded columns) rather than fetching-then-deleting.
-- Include `department` info, and `reporting_manager` info when present, in list/detail responses.
-- All list/read queries must exclude soft-deleted employees (`where: { is_deleted: false }`).
-- Passwords always stored as bcrypt hashes, never plain text.
+- Return a success message.
 
 ---
 
 ## DTO validation
 
-`class-validator` / `class-transformer`: `@IsString()`, `@IsNotEmpty()`, `@IsEmail()` (emails), `@IsEnum(Role)` (role), `@IsEnum(EmployeeStatus)` (status DTO), `@IsDateString()` (`joining_date`), `@IsOptional()` (`reporting_manager_official_email`). Mirror the existing `LoginDto` style (trim/lowercase emails via `@Transform` where appropriate).
+`class-validator` / `class-transformer`:
+
+- `CreateDepartmentDto.name`: `@IsString()`, `@IsNotEmpty()`, `@Transform(({ value }) => value.trim())` (mirror the spec). Consider `@MaxLength` for safety, consistent with the search-length constants pattern.
+- `UpdateDepartmentDto`: `export class UpdateDepartmentDto extends PartialType(CreateDepartmentDto) {}` (uses `@nestjs/mapped-types`, already installed for feature 005).
+- `ListDepartmentsQueryDto`: copy `ListEmployeesQueryDto` (optional `page`/`limit` as `@Type(() => Number) @IsInt() @Min(1)`, optional trimmed `search` string with `@MaxLength`).
 
 ## Messages
 
-Add a new `EmployeeMessages` object to the **existing** `backend/src/constant/messages.constant.ts` (singular `constant/` — matching the established codebase layout, **not** the spec's plural `src/constants/`). Suggested keys: `EMPLOYEE_NOT_FOUND`, `EMPLOYEE_CREATED_SUCCESSFULLY`, `EMPLOYEE_UPDATED_SUCCESSFULLY`, `EMPLOYEE_DELETED_SUCCESSFULLY`, `EMPLOYEE_ALREADY_DELETED`, `DEPARTMENT_NOT_FOUND`, `EMAIL_ALREADY_EXISTS`, `REPORTING_MANAGER_NOT_FOUND`, `CANNOT_REPORT_TO_SELF`. No hardcoded strings at throw sites.
+Add a new `DepartmentMessages` object to the **existing** singular `backend/src/constant/messages.constant.ts` (matching the established layout, **not** the spec's plural `src/constants/`). Keys:
+
+```ts
+export const DepartmentMessages = {
+  DEPARTMENT_NOT_FOUND: "Department not found",
+  DEPARTMENT_ALREADY_EXISTS: "Department already exists",
+  DEPARTMENT_CREATED_SUCCESSFULLY: "Department created successfully",
+  DEPARTMENT_UPDATED_SUCCESSFULLY: "Department updated successfully",
+  DEPARTMENT_DELETED_SUCCESSFULLY: "Department deleted successfully",
+  DEPARTMENT_HAS_EMPLOYEES:
+    "Department cannot be deleted while employees are assigned",
+} as const;
+```
+
+> Note: `EmployeeMessages` already defines `DEPARTMENT_NOT_FOUND` (used when resolving a department for an employee). Keep the department-module copy under `DepartmentMessages` so each module owns its wording; don't reach across into `EmployeeMessages`. No hardcoded strings at throw sites.
 
 ---
 
-## Open questions (resolve before/while implementing)
+## Discrepancies / decisions flagged
 
-1. **`employee_code`** — the schema requires `employee_code String @unique` (no default), but the spec's `CreateEmployeeDto` does **not** list it as an input. Decision needed: auto-generate it in the service (e.g. a sequence/prefix scheme, as the seed data used as a business key) **or** add it to the DTO as a required unique input. Cannot create an employee without one.
-2. **Messages directory** — spec says `src/constants/` (plural); codebase uses `src/constant/` (singular). Plan follows the existing singular path for consistency; confirm this is acceptable.
+1. **Spec title** — corrected: the spec file `006-department-crud-apis.md` heading was "Feature 005 …" and is now "Feature 006 — Department Management Module" (005 was the Employee module, already completed).
+2. **DB unique constraint vs. spec's "active-only, case-insensitive" rule** — the schema declares `name String @unique`, which is a **case-sensitive** constraint spanning **all** rows (including soft-deleted). The spec wants (a) _case-insensitive_ uniqueness and (b) checked only against _active_ departments. Implications:
+   - Case-insensitivity must be enforced in the **service** (Prisma `mode: 'insensitive'` query) — the DB `@unique` alone won't catch `"HR"` vs `"hr"`.
+   - The DB `@unique` will still **reject re-creating a name that exactly matches a soft-deleted department's name**, even though the spec's active-only check would allow it. Same tension noted for employee email-uniqueness in feature 005. **Decision:** enforce the spec's active-only + case-insensitive check in the service, and additionally catch Prisma `P2002` and map it to `DEPARTMENT_ALREADY_EXISTS` (friendly conflict) for the soft-deleted-collision edge case. No schema change for this feature. (If the business truly needs to reuse soft-deleted names, that's a separate schema decision — out of scope here.)
+3. **Employee count semantics** — "employee count for each department" counted as **active** employees (`is_deleted: false`), aligning with the delete guard. Confirm if the total (including soft-deleted) is wanted instead.
+4. **Messages path** — singular `src/constant/` (as in 003/004/005), not the spec's plural `src/constants/`.
 
 ---
 
 ## Definition of Done (from spec)
 
-- [x] APIs: Get All, Get By Id, Create, Update, Update Status, Soft Delete, Get Current — all implemented.
-- [x] DTOs: `CreateEmployeeDto`, `UpdateEmployeeDto`, `UpdateEmployeeStatusDto` implemented with validation.
-- [x] Admin routes protected with `JwtAuthGuard + RolesGuard + @Roles(Role.ADMIN)`; `/employees/me` protected with `JwtAuthGuard`.
-- [x] Department, reporting-manager, email-uniqueness validation + password hashing + soft delete implemented.
-- [x] Sensitive fields excluded from all responses; passwords stored as bcrypt hashes.
-- [x] Soft-deleted employees excluded from queries; unauthorized/role-restricted access blocked.
-- [x] `AuthService.isUserActive` inactive-session guard wired in.
-- [x] `npm run build` passes; `npm run lint` passes; manual API testing completed.
+- [x] APIs: Get All, Create, Update, Soft Delete — all implemented.
+- [x] DTOs: `CreateDepartmentDto`, `UpdateDepartmentDto` (+ `ListDepartmentsQueryDto`) with validation.
+- [x] All routes protected with `JwtAuthGuard + RolesGuard + @Roles(Role.ADMIN)`; service-level `AuthService.isUserActive` session guard wired in.
+- [x] Case-insensitive department-name uniqueness enforced (create + update).
+- [x] Soft delete implemented; soft-deleted departments excluded from queries; internal fields never returned.
+- [x] Department deletion blocked when active employees are assigned.
+- [x] No hardcoded exception messages (`DepartmentMessages`).
+- [x] `npm run build` passes; `npm run lint` passes; manual API testing completed (create dup blocked, delete-with-employees blocked, soft-deleted excluded).
 
 ---
 
 ## Notes / decisions
 
-- Schema is the source of truth — no invented fields. The `Employee` model already carries everything (`status`, `is_active`, `refresh_token_hash`, soft-delete fields, reporting-manager self-relation), so **no migration is required** for this feature.
-- Reuses the auth module built in features 003/004: `JwtAuthGuard`, `RolesGuard`, `@Roles(Role.ADMIN)`, and the exported `AuthService.isUserActive`.
-- Input uses business keys (`department_name`, `reporting_manager_official_email`) which the service resolves to FKs (`department_id`, `reporting_manager_id`) — consistent with how the seed data referenced relationships by business key.
-- Suggested branch: `feature/employee-module` (per development-rules git naming).
+- Schema is the source of truth — no invented fields. The `Department` model carries only `id`, `name`, `employees[]`, soft-delete fields, and timestamps (**no `description`** field), so **no migration is required**.
+- Reuses the auth module (003/004): `JwtAuthGuard`, `RolesGuard`, `@Roles(Role.ADMIN)`, exported `AuthService.isUserActive`.
+- Mirror the Employee module patterns: a single safe `select` projection reused by every endpoint, `assertActiveSession` helper, `{ data, pagination }` list shape, `{ message, data }` mutation shape, `{ message }` delete shape, `ParseUUIDPipe` on `:id`, and a `toWriteError`-style `P2002` mapper for race-safe conflicts.
+- Suggested branch: `feature/department-crud-apis` (per development-rules git naming).
 
 ## History
 
@@ -150,3 +168,7 @@ Add a new `EmployeeMessages` object to the **existing** `backend/src/constant/me
 - 2026-06-11 — **Started feature 005 (Employee Management Module).** Read spec `specs/005-employee-crud-apis.md` and all referenced context (project-overview, business-rules, database-design, development-rules, prisma-schema, api-contracts) plus the live backend (Employee schema model, auth module: `@Roles`/`Role`, guards, `AuthenticatedUser`, `AuthService.isUserActive`, `messages.constant.ts`). Rewrote current-feature.md with the 005 plan: 7 endpoints (CRUD + status + soft delete + `/employees/me`), the `src/employee` module layout (thin controller, service-only logic, 3 DTOs), authorization matrix (`JwtAuthGuard + RolesGuard + @Roles(Role.ADMIN)` for admin routes; `JwtAuthGuard` for `/me`), full business-rule set (department/manager/email-uniqueness validation, bcrypt hashing, server-set defaults, soft delete, inactive-session guard via `AuthService.isUserActive`), response-safety field exclusions, DTO validation decorators, and the new `EmployeeMessages` constant. **No schema change / no migration** — the Employee model already has every field. **Flagged two discrepancies:** (1) spec says `EmployeeRole.ADMIN` but the codebase enum is `Role` (use `Role.ADMIN`); (2) `employee_code` is a required `@unique` schema field absent from the spec's CreateEmployeeDto — needs a decision (auto-generate vs. accept as input). Also noted route ordering (`/me` before `/:id`) and the singular `constant/` messages path. Status: Not Started, ready to implement.
 
 - 2026-06-11 — **Implemented & verified (005 — Employee Management Module).** Branched `feature/employee-crud-apis` off main. Installed `@nestjs/mapped-types@2.1.1` (was missing) for `PartialType` in `UpdateEmployeeDto`. Created `src/employee/` (module, thin controller, service, 3 DTOs). **Decisions:** (1) `employee_code` auto-generated `EMPxxx` (user-approved) — `generateEmployeeCode(tx)` reads the current max inside the create `$transaction` and increments (zero-padded to 3), matching the seed convention; not a DTO field. (2) Used `Role.ADMIN` (codebase enum), not the spec's `EmployeeRole`. (3) Messages added as `EmployeeMessages` in the existing singular `src/constant/messages.constant.ts`; added `PASSWORD_HASH_ROUNDS` (10) + list-limit constants to `values.constant.ts`. **Service design:** every admin method calls `assertActiveSession` → `AuthService.isUserActive` (throws `UnauthorizedException(AuthMessages.UNAUTHORIZED_EXCEPTION)` if inactive); a single `EMPLOYEE_SAFE_SELECT` (typed `satisfies Prisma.EmployeeSelect`) is the only projection used by every endpoint, so `password`/`refresh_token_hash`/`is_active`/`is_deleted`/`deleted_at`/`created_at`/`updated_at` are never selected; includes `department` + `reporting_manager` summaries. Business keys (`department_name`, `reporting_manager_official_email`) resolved to FKs in the service; email-uniqueness checked across **all** rows (the `@unique` constraint spans soft-deleted too); manager must exist + not deleted + WORKING + not self; password bcrypt-hashed; create sets server defaults explicitly; P2002 races mapped to friendly conflicts via `toWriteError`. Controller: `@Query` page/limit/search (parsed+clamped in service), `ParseUUIDPipe` on `:id`, `/employees/me` declared before `/:id`. **Return shapes:** list → `{ data, pagination }`; reads → safe employee; mutations → `{ message, data }`; delete → `{ message }`. Registered `EmployeeModule` in `app.module.ts`. **Manual testing — 23 scenarios, all pass** against a running server (admin `Admin@123`): login; `/me`; paginated list (total 12, safe fields); search; create (auto `EMP013`, w/ manager); duplicate-email 409; bad-department 404; self-report 400; manager-not-WORKING 400 (anika.verma ON_NOTICE); DTO validation 400 (bad email + short password, field-keyed); update (name+dept); status update; bad-enum 400; bad-UUID 400; soft delete; double-delete 400; soft-deleted excluded from GET/:id (404) & list; unauthenticated 401; EMPLOYEE→admin routes 403; EMPLOYEE→`/me` 200. Note: seeded **employee** passwords don't match the current `.env` `SEED_EMPLOYEE_PASSWORD` (admin does) — RBAC tested via a freshly-created known-password account. Test rows (EMP013/EMP014) hard-deleted afterward; DB back to the original 12 seeded employees. `npm run build` and `npm run lint` both pass. Status: Completed.
+
+- 2026-06-11 — **Started feature 006 (Department Management Module).** Read spec `specs/006-department-crud-apis.md` and re-checked the live backend (Department schema model, Employee module patterns from 005, `messages.constant.ts`, `ListEmployeesQueryDto`). Rewrote current-feature.md with the 006 plan: 4 admin endpoints (list w/ pagination+search+employee-count, create, update, soft delete) under `src/department` (thin controller, service-only logic, `CreateDepartmentDto` / `UpdateDepartmentDto` / added `ListDepartmentsQueryDto`), all routes `JwtAuthGuard + RolesGuard + @Roles(Role.ADMIN)` + service-level `AuthService.isUserActive` guard, case-insensitive active-only name uniqueness (create + update), soft delete with an active-employee dependency guard, a new `DepartmentMessages` constant, and a safe `select` that hides internal fields. **No schema change / no migration** — the `Department` model already has every field (note: **no `description` field** exists — don't invent one). **Flagged four items:** (1) the DB `name @unique` is case-sensitive and spans soft-deleted rows, so case-insensitivity + active-only must be enforced in the service, with a `P2002` fallback mapped to `DEPARTMENT_ALREADY_EXISTS` for the soft-deleted-name-collision edge case; (2) employee count interpreted as active employees only; (3) singular `constant/` messages path (not the spec's plural). Status: Not Started, ready to implement.
+
+- 2026-06-12 — **Implemented & verified (006 — Department Management Module).** Built `src/department/` (module, thin controller, service, 3 DTOs) mirroring the 005 Employee patterns. **Controller:** `@Controller('departments')` with class-level `@UseGuards(JwtAuthGuard, RolesGuard)` + `@Roles(Role.ADMIN)` (all 4 routes admin-only); `ParseUUIDPipe` on `:id`. **Service:** every method calls `assertActiveSession` → `AuthService.isUserActive` (throws `UnauthorizedException(AuthMessages.UNAUTHORIZED_EXCEPTION)` if inactive); a single `DEPARTMENT_SAFE_SELECT` (`satisfies Prisma.DepartmentSelect`) projecting only `id`, `name`, and a **filtered `_count`** of active employees (`employees: { where: { is_deleted: false } }`) — so `is_deleted`/`deleted_at`/`created_at`/`updated_at` are never selected; a `toDepartment` mapper reshapes the row to `{ id, name, employee_count }`. List: `is_deleted: false`, ordered by `created_at asc`, case-insensitive `contains` search on `name`, `{ data, pagination }` shape (page/limit clamped in service). Create/Update: case-insensitive active-only uniqueness via `assertNameAvailable` (`equals` + `mode: 'insensitive'`, `is_deleted: false`, `NOT: { id }` on update); `P2002` mapped to `DEPARTMENT_ALREADY_EXISTS` via `toWriteError` (catches the soft-deleted-name collision the DB `@unique` enforces). Delete: existence + already-deleted guard, then `employee.count({ department_id, is_deleted: false }) > 0` → `BadRequestException(DEPARTMENT_HAS_EMPLOYEES)`, else set `is_deleted/deleted_at`. **Constants:** added `DepartmentMessages` to `src/constant/messages.constant.ts` (incl. an extra `DEPARTMENT_ALREADY_DELETED` for the double-delete case) and department list/name length limits to `values.constant.ts`. Registered `DepartmentModule` in `app/app.module.ts`. **Manual testing — 18 scenarios, all pass** against a running server (admin `Admin@123`): list (6 depts, safe fields, employee counts, pagination); create dup (case-insensitive) 409; create `'  Legal  '` trimmed → 201; case-insensitive dup 409; empty name 400; update 200; update→existing-name 409; update non-existent 404; bad-UUID 400; delete Finance (2 employees) → 400 `DEPARTMENT_HAS_EMPLOYEES`; delete Legal (no employees) → 200; double-delete → 400; soft-deleted excluded from list (total back to 6); case-insensitive search; delete bad-UUID 400; recreate-dup 409 message; unauthenticated 401; EMPLOYEE→department routes 403 (via a temp account). Test rows (temp employee + Legal department) hard-deleted afterward via a throwaway tsx script; DB back to the original 6 departments / 12 employees. **One EADDRINUSE gotcha:** a stale pre-session server held port 3000 (served 404 for the new routes) — killed it and restarted before testing. `npm run build` and `npm run lint` both pass. Status: Completed.
